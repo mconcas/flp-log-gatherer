@@ -81,6 +81,14 @@ class LogCollector:
             
             # Collect all applications for this host (from all its groups)
             applications: Set[str] = set()
+            
+            # First, add applications from the special '_all_nodes' group
+            all_nodes_apps = self.config.get_applications_for_group('_all_nodes')
+            if all_nodes_apps:
+                applications.update(all_nodes_apps)
+                logger.debug(f"Added {len(all_nodes_apps)} applications from _all_nodes for {hostname}")
+            
+            # Then add applications from host's specific groups
             for group in groups:
                 apps = self.config.get_applications_for_group(group)
                 applications.update(apps)
@@ -220,6 +228,14 @@ class LogCollector:
         print("LOG COLLECTION CONFIGURATION SUMMARY")
         print("="*80 + "\n")
         
+        # Show applications applied to all nodes
+        all_nodes_apps = self.config.get_applications_for_group('_all_nodes')
+        if all_nodes_apps:
+            print("Applications collected from ALL nodes:")
+            for app in sorted(all_nodes_apps):
+                print(f"  • {app}")
+            print()
+        
         all_hosts = self.inventory.get_all_hosts()
         print(f"Total hosts: {len(all_hosts)}\n")
         
@@ -228,6 +244,12 @@ class LogCollector:
             
             # Collect applications
             applications: Set[str] = set()
+            
+            # Add _all_nodes applications
+            if all_nodes_apps:
+                applications.update(all_nodes_apps)
+            
+            # Add group-specific applications
             for group in groups:
                 apps = self.config.get_applications_for_group(group)
                 applications.update(apps)

@@ -54,32 +54,34 @@ applications:
 
 # Define which applications run on which node groups
 # Group names should match those in your Ansible inventory
+# 
+# Special group '_all_nodes': Applications here are collected from ALL nodes
+# regardless of their inventory group membership
 node_groups:
+  # Special: Applied to ALL nodes automatically
+  _all_nodes:
+    - system
+  
   bookkeepingdb:
     - postgresql
     - bookkeeping
-    - system
   
   bookkeeping:
     - nginx
     - bookkeeping
-    - system
   
   webservers:
     - nginx
     - apache
-    - system
   
   databases:
     - postgresql
     - mysql
-    - system
   
   monitoring:
     - prometheus
     - grafana
     - nginx
-    - system
 
 # Rsync and collection options
 rsync_options:

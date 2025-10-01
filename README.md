@@ -91,13 +91,19 @@ applications:
 
 ```yaml
 node_groups:
+  # Special group: applies to ALL nodes
+  _all_nodes:
+    - system
+  
   bookkeepingdb:
     - postgresql
-    - system
+  
   webservers:
     - nginx
     - apache
 ```
+
+**Note**: The special `_all_nodes` group automatically applies to every node, regardless of their inventory group. This is perfect for system logs, monitoring agents, or any application present on all nodes.
 
 3. **Rsync options**:
 
@@ -283,6 +289,26 @@ The tool uses SSH for connections. Ensure:
 - SSH keys are configured for passwordless access
 - User has permission to read log files (default: root)
 - Hosts are in `known_hosts` or SSH is configured to accept them
+
+### Universal Applications (_all_nodes)
+
+You can define applications that should be collected from **every node** using the special `_all_nodes` group:
+
+```yaml
+node_groups:
+  _all_nodes:
+    - system        # System logs from all nodes
+    - monitoring    # Monitoring agent logs
+    - security      # Security logs
+```
+
+This is useful for:
+- System logs (syslog, messages, kern.log)
+- Monitoring agents (node_exporter, telegraf)
+- Security logs (auth.log, secure)
+- Any application deployed universally
+
+The `_all_nodes` applications are collected **in addition to** group-specific applications.
 
 ### Customization
 
