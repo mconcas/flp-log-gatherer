@@ -1,0 +1,19 @@
+# Example Ansible inventory file
+# Format: [group_name] followed by hostnames
+
+[bookkeepingdb]
+alio2-cr1-hv-bdb01
+
+[bookkeeping]
+alio2-cr1-hv-web02
+
+[webservers]
+web01.example.com
+web02.example.com
+
+[databases]
+db01.example.com
+db02.example.com
+
+[monitoring]
+monitor01.example.com

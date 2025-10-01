@@ -1,0 +1,119 @@
+# log-puller configuration file
+# This file defines the mapping between applications, their log paths,
+# and which node groups they belong to
+
+# Define applications and their log file paths
+applications:
+  # PostgreSQL database
+  postgresql:
+    log_paths:
+      - /var/log/postgresql/postgresql-*.log
+      - /var/log/postgresql/*.log
+  
+  # MySQL/MariaDB database
+  mysql:
+    log_paths:
+      - /var/log/mysql/*.log
+      - /var/log/mariadb/*.log
+  
+  # Nginx web server
+  nginx:
+    log_paths:
+      - /var/log/nginx/access.log*
+      - /var/log/nginx/error.log*
+  
+  # Apache web server
+  apache:
+    log_paths:
+      - /var/log/apache2/*.log
+      - /var/log/httpd/*.log
+  
+  # Bookkeeping application (example)
+  bookkeeping:
+    log_paths:
+      - /opt/bookkeeping/logs/*.log
+      - /var/log/bookkeeping/*.log
+  
+  # System logs
+  system:
+    log_paths:
+      - /var/log/syslog*
+      - /var/log/messages*
+      - /var/log/kern.log*
+  
+  # Prometheus monitoring
+  prometheus:
+    log_paths:
+      - /var/log/prometheus/*.log
+      - /opt/prometheus/logs/*.log
+  
+  # Grafana monitoring
+  grafana:
+    log_paths:
+      - /var/log/grafana/*.log
+
+# Define which applications run on which node groups
+# Group names should match those in your Ansible inventory
+node_groups:
+  bookkeepingdb:
+    - postgresql
+    - bookkeeping
+    - system
+  
+  bookkeeping:
+    - nginx
+    - bookkeeping
+    - system
+  
+  webservers:
+    - nginx
+    - apache
+    - system
+  
+  databases:
+    - postgresql
+    - mysql
+    - system
+  
+  monitoring:
+    - prometheus
+    - grafana
+    - nginx
+    - system
+
+# Rsync and collection options
+rsync_options:
+  # Maximum number of parallel rsync jobs
+  max_parallel_jobs: 5
+  
+  # Enable compression of collected logs
+  compress: true
+  
+  # Local directory where logs will be stored
+  local_storage: logs
+  
+  # SSH user for remote connections
+  ssh_user: root
+  
+  # SSH port
+  ssh_port: 22
+  
+  # Additional rsync flags
+  # -a: archive mode (preserves permissions, timestamps, etc.)
+  # --progress: show progress during transfer
+  additional_flags:
+    - -a
+    - --progress
+  
+  # Number of retry attempts for failed syncs
+  retry_count: 3
+  
+  # Delay in seconds between retry attempts
+  retry_delay: 5
+  
+  # Timeout in seconds for each rsync operation
+  timeout: 300
+  
+  # Date filter: only sync files modified within last N days
+  # Set to null or omit to sync all files
+  date_filter: null
