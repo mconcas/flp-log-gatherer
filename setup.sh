@@ -1,10 +1,10 @@
 #!/bin/bash
-# Setup script for log-puller
+# Setup script for flp-gatherer
 
 set -e
 
 echo "======================================"
-echo "log-puller Setup"
+echo "flp-gatherer Setup"
 echo "======================================"
 echo
 

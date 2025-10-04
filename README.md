@@ -1,159 +1,315 @@
-# log-puller
+# flp-gatherer# flp-gatherer
 
-A utility for collecting logs from heterogeneous nodes using rsync, with support for Ansible inventory parsing, parallel execution, and systemd journal collection (binary and export modes).
 
-## Features
 
-- **Ansible Integration**: Parse Ansible inventory files to determine which applications run on which nodes
-- **Parallel Execution**: Configurable concurrent rsync jobs for efficient log collection
-- **Systemd Journal Collection**: 
+Collect logs from heterogeneous nodes using rsync with Ansible inventory parsing, parallel execution, and systemd journal support.A utility for collecting logs from heterogeneous nodes using rsync, with support for Ansible inventory parsing, parallel execution, and systemd journal collection (binary and export modes).
+
+
+
+## Installation## Features
+
+
+
+```bash- **Ansible Integration**: Parse Ansible inventory files to determine which applications run on which nodes
+
+pip install -e .- **Parallel Execution**: Configurable concurrent rsync jobs for efficient log collection
+
+```- **Systemd Journal Collection**: 
+
   - **Binary mode** (RECOMMENDED): Copy journal files directly - minimal remote impact, complete data
-  - **Export mode**: Use journalctl to export logs with unit/time filtering
+
+## Quick Start  - **Export mode**: Use journalctl to export logs with unit/time filtering
+
 - **Retry Logic**: Automatic retry on failures with comprehensive error logging
-- **Incremental Compression**: Local-side compression that only archives new files
-- **Multiple Modes**: Normal sync, dry-run, and explore modes
-- **Rotated Logs**: Automatically handles log rotation (`.1`, `.gz`, etc.)
+
+```bash- **Incremental Compression**: Local-side compression that only archives new files
+
+# Check connectivity- **Multiple Modes**: Normal sync, dry-run, and explore modes
+
+flp-gatherer probe- **Rotated Logs**: Automatically handles log rotation (`.1`, `.gz`, etc.)
+
 - **Per-Node Organization**: Collected logs organized by hostname and application
 
-## Table of Contents
+# Check remote paths
 
-- [Installation](#installation)
-- [Quick Start](#quick-start)
+flp-gatherer explore## Table of Contents
+
+
+
+# Dry-run- [Installation](#installation)
+
+flp-gatherer sync --dry-run- [Quick Start](#quick-start)
+
 - [Configuration](#configuration)
-  - [Inventory File](#inventory-file)
-  - [Configuration File](#configuration-file)
-  - [Systemd Journal Collection](#systemd-journal-collection)
+
+# Collect logs  - [Inventory File](#inventory-file)
+
+flp-gatherer sync  - [Configuration File](#configuration-file)
+
+```  - [Systemd Journal Collection](#systemd-journal-collection)
+
 - [Usage](#usage)
-- [Configuration Examples](#configuration-examples)
+
+## Configuration- [Configuration Examples](#configuration-examples)
+
 - [Directory Structure](#directory-structure)
-- [Troubleshooting](#troubleshooting)
+
+### Inventory (`config/hosts`)- [Troubleshooting](#troubleshooting)
+
 - [Advanced Features](#advanced-features)
+
+Ansible INI format:
 
 ## Installation
 
-1. Clone or download this repository
-2. Install dependencies:
+```ini
+
+[webservers]1. Clone or download this repository
+
+web01.example.com2. Install dependencies:
+
+web02.example.com
 
 ```bash
-pip install -r requirements.txt
+
+[databases]pip install -r requirements.txt
+
+db01.example.com```
+
 ```
 
 3. Configure your inventory and settings (see Configuration section)
 
+### Config (`config/config.yaml`)
+
 ## Quick Start
 
-1. **Copy example configuration files**:
+```yaml
+
+applications:1. **Copy example configuration files**:
+
+  # File-based logs
+
+  nginx:```bash
+
+    log_paths:cp config/hosts.example config/hosts
+
+      - /var/log/nginx/*.log*# Edit config/hosts with your actual nodes
+
+    journal: false```
+
+  
+
+  # Systemd journal (binary mode - copies journal files directly)2. **Review and customize** `config/config.yaml` for your environment
+
+  system:
+
+    journal: true3. **Explore remote files** (check if log paths exist):
+
+    journal_mode: binary
 
 ```bash
-cp config/hosts.example config/hosts
-# Edit config/hosts with your actual nodes
-```
 
-2. **Review and customize** `config/config.yaml` for your environment
+node_groups:./main.py explore
 
-3. **Explore remote files** (check if log paths exist):
+  _all_nodes:  # Applied to ALL hosts```
 
-```bash
-./main.py explore
-```
+    - system
 
-4. **Perform a dry-run** (see what would be synced):
+  4. **Perform a dry-run** (see what would be synced):
 
-```bash
+  webservers:
+
+    - nginx```bash
+
 ./main.py sync --dry-run
-```
 
-5. **Collect logs**:
+rsync_options:```
 
-```bash
-./main.py sync
-```
+  max_parallel_jobs: 5
 
-## Configuration
+  compress: false  # Post-sync compression (use --compress flag)5. **Collect logs**:
 
-### Inventory File (`config/hosts`)
+  use_compression: false  # rsync -z during transfer
 
-The inventory file uses Ansible INI format with group headers:
+  local_storage: /var/logs```bash
 
-```ini
-[bookkeepingdb]
+  ssh_user: root./main.py sync
+
+  ssh_ignore_host_key: true```
+
+
+
+journal_options:## Configuration
+
+  default_mode: binary  # or 'export'
+
+  binary:### Inventory File (`config/hosts`)
+
+    remote_journal_path:
+
+      - /var/log/journal/  # persistentThe inventory file uses Ansible INI format with group headers:
+
+      - /run/log/journal/  # volatile
+
+    current_boot_only: true```ini
+
+```[bookkeepingdb]
+
 alio2-cr1-hv-bdb01
 
+## Commands
+
 [bookkeeping]
-alio2-cr1-hv-web02
 
-[webservers]
+```bashalio2-cr1-hv-web02
+
+# Sync logs
+
+flp-gatherer sync [--compress] [--dry-run] [-v][webservers]
+
 web01.example.com
-web02.example.com
-```
 
-### Configuration File (`config/config.yaml`)
+# Test connectivityweb02.example.com
+
+flp-gatherer probe```
+
+
+
+# Check remote paths### Configuration File (`config/config.yaml`)
+
+flp-gatherer explore
 
 The configuration file defines:
 
-#### 1. Applications and their log sources
+# Compress collected logs
 
-```yaml
-applications:
-  # Traditional file-based logs only
+flp-gatherer compress [--force]#### 1. Applications and their log sources
+
+
+
+# List archives```yaml
+
+flp-gatherer list-archives [--host HOST]applications:
+
+```  # Traditional file-based logs only
+
   postgresql:
-    log_paths:
+
+## Journal Collection    log_paths:
+
       - /var/log/postgresql/*.log
-    journal: false
-  
-  # Both file-based and journal (binary mode - RECOMMENDED)
-  system:
-    log_paths:
+
+**Binary mode** (default, recommended):    journal: false
+
+- Copies journal files directly via rsync  
+
+- Minimal remote CPU/IO impact  # Both file-based and journal (binary mode - RECOMMENDED)
+
+- Process locally with full flexibility  system:
+
+- Supports incremental sync    log_paths:
+
       - /var/log/syslog*
-    journal: true
-    journal_mode: binary  # Copy journal files directly
-  
-  # Journal export mode (for specific services)
-  nginx:
+
+```bash    journal: true
+
+# Process locally after collection    journal_mode: binary  # Copy journal files directly
+
+journalctl --directory=/var/logs/host1/system/journal_0 \  
+
+           --output=json --no-pager > host1.json  # Journal export mode (for specific services)
+
+```  nginx:
+
     log_paths:
-      - /var/log/nginx/*.log*
-    journal: true
-    journal_mode: export  # Use journalctl export
+
+**Export mode**:      - /var/log/nginx/*.log*
+
+- Uses journalctl on remote to export logs    journal: true
+
+- Can filter by unit during collection    journal_mode: export  # Use journalctl export
+
+- More remote CPU usage```
+
+
+
+## Directory Structure#### 2. Node groups and their applications
+
+
+
+``````yaml
+
+/var/logs/node_groups:
+
+├── host1/  # Special group: applies to ALL nodes automatically
+
+│   ├── nginx/  _all_nodes:
+
+│   │   └── access.log    - system
+
+│   └── system/  
+
+│       ├── journal_0/  # /var/log/journal/  bookkeepingdb:
+
+│       └── journal_1/  # /run/log/journal/    - postgresql
+
+└── archives/  
+
+    └── host1_20251004_143000.tar.gz  webservers:
+
+```    - nginx
+
 ```
 
-#### 2. Node groups and their applications
-
-```yaml
-node_groups:
-  # Special group: applies to ALL nodes automatically
-  _all_nodes:
-    - system
-  
-  bookkeepingdb:
-    - postgresql
-  
-  webservers:
-    - nginx
-```
+## Troubleshooting
 
 **Note**: The special `_all_nodes` group automatically applies to every node, regardless of their inventory group. Perfect for system logs or monitoring agents.
 
-#### 3. Rsync and collection options
+```bash
+
+# Test connectivity#### 3. Rsync and collection options
+
+flp-gatherer probe
 
 ```yaml
-rsync_options:
-  max_parallel_jobs: 5
+
+# Check if paths existrsync_options:
+
+flp-gatherer explore  max_parallel_jobs: 5
+
   compress: false  # Set to true to auto-compress after each sync
-  use_compression: false  # Set to true to enable rsync -z compression during transfer
-  local_storage: /var/logs/collected  # Absolute or relative path
+
+# Test SSH manually  use_compression: false  # Set to true to enable rsync -z compression during transfer
+
+ssh root@hostname journalctl --no-pager --lines=10  local_storage: /var/logs/collected  # Absolute or relative path
+
   ssh_user: root
-  ssh_port: 22
-  ssh_ignore_host_key: true  # WARNING: reduces security
-  retry_count: 3
+
+# Check failures  ssh_port: 22
+
+cat /var/logs/failures.log  ssh_ignore_host_key: true  # WARNING: reduces security
+
+```  retry_count: 3
+
   retry_delay: 5
-  timeout: 300
-  date_filter: null  # Or number of days (e.g., 7)
+
+**Journal permission issues:**  timeout: 300
+
+```bash  date_filter: null  # Or number of days (e.g., 7)
+
+sudo usermod -a -G systemd-journal your-ssh-user```
+
 ```
 
 #### 4. Journal collection options
 
+## License
+
 ```yaml
-journal_options:
+
+MITjournal_options:
+
   # Default mode: 'binary' (RECOMMENDED) or 'export'
   default_mode: binary
   
@@ -175,7 +331,7 @@ journal_options:
 
 ### Systemd Journal Collection
 
-Modern Linux distributions use systemd journal. log-puller supports two collection modes:
+Modern Linux distributions use systemd journal. flp-gatherer supports two collection modes:
 
 #### Binary Mode (RECOMMENDED - Default)
 
@@ -480,7 +636,7 @@ output {
 ### Project Structure
 
 ```
-log-puller/
+flp-gatherer/
 ├── config/
 │   ├── config.yaml          # Main configuration
 │   └── hosts               # Ansible inventory
@@ -599,68 +755,3 @@ The compression system tracks which files have been archived:
 - Failed syncs are logged to `failures.log`
 - Automatic retry with configurable attempts and delays
 - Continues on individual failures (doesn't abort entire run)
-
-### SSH Configuration
-
-The tool uses SSH for connections. Ensure:
-- SSH keys are configured for passwordless access
-- User has permission to read log files
-
-**Host Key Verification**:
-
-By default, ignores SSH host key verification (`ssh_ignore_host_key: true`). 
-
-To enable strict checking (more secure):
-```yaml
-rsync_options:
-  ssh_ignore_host_key: false
-```
-
-Then ensure all hosts are in `~/.ssh/known_hosts`:
-```bash
-ssh-keyscan hostname >> ~/.ssh/known_hosts
-```
-
-### Date Filtering
-
-Apply to both rsync and journal collection:
-
-```yaml
-rsync_options:
-  date_filter: 7  # Only last 7 days
-```
-
-### Scheduled Execution
-
-Create a script for periodic execution:
-
-```bash
-#!/bin/bash
-# /usr/local/bin/collect-logs.sh
-
-cd /path/to/log-puller
-./main.py sync >> /var/log/log-puller.log 2>&1
-```
-
-Add to crontab:
-
-```bash
-# Collect logs daily at 2 AM
-0 2 * * * /usr/local/bin/collect-logs.sh
-```
-
-## Requirements
-
-- Python 3.7+
-- `rsync` installed on both local and remote systems
-- SSH access to remote nodes
-- PyYAML library
-- For journal collection: systemd-based systems with `journalctl`
-
-## License
-
-This project is provided as-is for log collection purposes.
-
-## Contributing
-
-Feel free to submit issues or pull requests for improvements!
