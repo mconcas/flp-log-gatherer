@@ -25,9 +25,9 @@ venv/
 ENV/
 env/
 
-# Collected logs
-logs/*
-!logs/.gitkeep
+# Collected logs (if using relative path)
+logs/
+collected_logs/
 
 # IDE
 .vscode/

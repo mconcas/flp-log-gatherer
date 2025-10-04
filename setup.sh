@@ -51,6 +51,8 @@ echo
 echo "Next steps:"
 echo "  1. Edit config/hosts with your actual nodes"
 echo "  2. Review and customize config/config.yaml"
+echo "     - Set local_storage to your desired path"
+echo "     - Configure applications and log paths"
 echo "  3. Test SSH connectivity to your nodes"
 echo "  4. Run: ./main.py explore"
 echo "  5. Run: ./main.py sync --dry-run"

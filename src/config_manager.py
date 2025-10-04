@@ -47,6 +47,7 @@ class ConfigManager:
             'local_storage': 'logs',
             'ssh_user': 'root',
             'ssh_port': 22,
+            'ssh_ignore_host_key': True,  # Ignore host key verification by default
             'additional_flags': ['-a', '--progress'],
             'retry_count': 3,
             'retry_delay': 5,
@@ -82,6 +83,53 @@ class ConfigManager:
         """
         app_config = self.applications.get(app_name, {})
         return app_config.get('log_paths', [])
+    
+    def is_journal_enabled(self, app_name: str) -> bool:
+        """
+        Check if journal collection is enabled for an application
+        
+        Args:
+            app_name: Name of the application
+            
+        Returns:
+            True if journal collection is enabled
+        """
+        app_config = self.applications.get(app_name, {})
+        return app_config.get('journal', False)
+    
+    def get_journal_mode(self, app_name: str) -> str:
+        """
+        Get journal collection mode for an application
+        
+        Args:
+            app_name: Name of the application
+            
+        Returns:
+            'binary' or 'export' mode
+        """
+        app_config = self.applications.get(app_name, {})
+        # Check app-specific mode, fallback to default, then binary
+        mode = app_config.get('journal_mode')
+        if mode:
+            return mode
+        
+        # Get default from journal_options
+        journal_opts = self.config.get('journal_options', {})
+        return journal_opts.get('default_mode', 'binary')
+    
+    def get_journal_option(self, option_name: str, default: Any = None) -> Any:
+        """
+        Get a journal collection option
+        
+        Args:
+            option_name: Name of the option
+            default: Default value if option not found
+            
+        Returns:
+            Option value
+        """
+        journal_opts = self.config.get('journal_options', {})
+        return journal_opts.get(option_name, default)
     
     def get_rsync_option(self, option_name: str, default: Any = None) -> Any:
         """
@@ -198,10 +246,13 @@ class ConfigManager:
                 if app not in self.applications:
                     errors.append(f"Application '{app}' in group '{group}' not defined in applications section")
         
-        # Check that all applications have log paths
+        # Check that all applications have log paths or journal enabled
         for app_name, app_config in self.applications.items():
-            if 'log_paths' not in app_config or not app_config['log_paths']:
-                errors.append(f"Application '{app_name}' has no log_paths defined")
+            has_log_paths = 'log_paths' in app_config and app_config['log_paths']
+            has_journal = app_config.get('journal', False)
+            
+            if not has_log_paths and not has_journal:
+                errors.append(f"Application '{app_name}' has no log_paths and journal is not enabled")
         
         return errors
 

@@ -27,6 +27,7 @@ class RsyncJob:
     local_path: Path
     ssh_user: str = "root"
     ssh_port: int = 22
+    ssh_ignore_host_key: bool = True
     flags: List[str] = None
     
     def __post_init__(self):
@@ -97,8 +98,10 @@ class RsyncManager:
         if '-v' not in job.flags and '--verbose' not in job.flags:
             cmd.append('-v')
         
-        # Add SSH options (port, etc.)
+        # Add SSH options (port, host key checking, etc.)
         ssh_opts = f"ssh -p {job.ssh_port}"
+        if job.ssh_ignore_host_key:
+            ssh_opts += " -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
         cmd.extend(['-e', ssh_opts])
         
         # Add source and destination
@@ -239,10 +242,21 @@ class RsyncManager:
         # Use SSH to check if files exist
         cmd = [
             'ssh',
-            '-p', str(job.ssh_port),
+            '-p', str(job.ssh_port)
+        ]
+        
+        # Add host key checking options if configured
+        if job.ssh_ignore_host_key:
+            cmd.extend([
+                '-o', 'StrictHostKeyChecking=no',
+                '-o', 'UserKnownHostsFile=/dev/null',
+                '-o', 'LogLevel=ERROR'  # Suppress SSH warnings
+            ])
+        
+        cmd.extend([
             ssh_target,
             f'ls -la {job.remote_path} 2>&1'
-        ]
+        ])
         
         try:
             logger.info(f"[{job.hostname}/{job.app_name}] Checking remote path: {job.remote_path}")

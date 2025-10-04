@@ -10,6 +10,8 @@ from pathlib import Path
 
 from src.log_collector import LogCollector
 from src.compression_manager import CompressionManager
+from src.probe_manager import ProbeManager
+from src.inventory_parser import InventoryParser
 
 
 # Set up logging
@@ -35,6 +37,11 @@ async def run_sync(args):
         # Initialize
         collector.initialize()
         
+        # Ensure local storage directory exists
+        storage_path = collector.config.get_local_storage_path()
+        storage_path.mkdir(parents=True, exist_ok=True)
+        logging.info(f"Using local storage: {storage_path}")
+        
         # Show summary if requested
         if args.show_summary:
             collector.print_summary()
@@ -55,7 +62,7 @@ async def run_sync(args):
         # Compress if not dry-run and compression is enabled
         if not args.dry_run and args.compress:
             print("Compressing collected logs...")
-            compression_manager = CompressionManager()
+            compression_manager = CompressionManager(base_path=collector.config.get_local_storage_path())
             compression_results = compression_manager.compress_all_hosts()
             
             print(f"\n{'='*80}")
@@ -112,9 +119,61 @@ async def run_explore(args):
         return 1
 
 
+async def run_probe(args):
+    """Run probe to test connectivity and SSH access"""
+    try:
+        # Parse inventory to get hosts
+        inventory = InventoryParser(args.inventory)
+        inventory.parse()
+        hosts = inventory.get_all_hosts()
+        
+        if not hosts:
+            logging.error("No hosts found in inventory")
+            return 1
+        
+        # Load config to get SSH settings
+        from src.config_manager import ConfigManager
+        config = ConfigManager(args.config)
+        config.load()
+        
+        rsync_opts = config.config.get('rsync_options', {})
+        ssh_user = rsync_opts.get('ssh_user', 'root')
+        ssh_ignore_host_key = rsync_opts.get('ssh_ignore_host_key', True)
+        # Invert the logic: if we ignore host keys, then strict checking is False
+        strict_host_key = not ssh_ignore_host_key
+        
+        # Create probe manager
+        probe_manager = ProbeManager(
+            ssh_user=ssh_user,
+            strict_host_key_checking=strict_host_key
+        )
+        
+        # Probe all hosts
+        results = await probe_manager.probe_hosts(hosts)
+        
+        # Print results
+        probe_manager.print_probe_results(results)
+        
+        # Return success if all hosts are reachable
+        all_ok = all(r['ping_success'] and r['ssh_success'] for r in results)
+        return 0 if all_ok else 1
+        
+    except Exception as e:
+        logging.error(f"Error during probe: {e}")
+        if args.verbose:
+            import traceback
+            traceback.print_exc()
+        return 1
+
+
 def run_list_archives(args):
     """List available archives"""
-    compression_manager = CompressionManager()
+    # Load config to get storage path
+    from src.config_manager import ConfigManager
+    config = ConfigManager(args.config)
+    config.load()
+    
+    compression_manager = CompressionManager(base_path=config.get_local_storage_path())
     
     if args.host:
         print(f"\nArchives for host: {args.host}")
@@ -139,7 +198,12 @@ def run_list_archives(args):
 
 def run_compress(args):
     """Run compression on already-collected logs"""
-    compression_manager = CompressionManager()
+    # Load config to get storage path
+    from src.config_manager import ConfigManager
+    config = ConfigManager(args.config)
+    config.load()
+    
+    compression_manager = CompressionManager(base_path=config.get_local_storage_path())
     
     print("Compressing collected logs...")
     results = compression_manager.compress_all_hosts(force=args.force)
@@ -183,6 +247,9 @@ Examples:
   # Explore remote files without syncing
   %(prog)s explore
   
+  # Test connectivity and SSH access
+  %(prog)s probe
+  
   # Show configuration summary
   %(prog)s sync --show-summary
   
@@ -216,6 +283,10 @@ Examples:
     explore_parser = subparsers.add_parser('explore', 
                                           help='Explore remote files without syncing')
     
+    # Probe command
+    probe_parser = subparsers.add_parser('probe',
+                                        help='Test connectivity and SSH access to all hosts')
+    
     # Compress command
     compress_parser = subparsers.add_parser('compress',
                                            help='Compress already-collected logs')
@@ -245,6 +316,8 @@ Examples:
             return asyncio.run(run_sync(args))
         elif args.command == 'explore':
             return asyncio.run(run_explore(args))
+        elif args.command == 'probe':
+            return asyncio.run(run_probe(args))
         elif args.command == 'compress':
             return run_compress(args)
         elif args.command == 'list-archives':

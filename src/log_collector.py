@@ -9,6 +9,7 @@ from pathlib import Path
 from .inventory_parser import InventoryParser
 from .config_manager import ConfigManager
 from .rsync_manager import RsyncManager, RsyncJob
+from .journal_collector import JournalCollector
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,9 @@ class LogCollector:
         self.inventory = InventoryParser(inventory_path)
         self.config = ConfigManager(config_path)
         self.rsync_manager = None
+        self.journal_collector = None
         self.jobs: List[RsyncJob] = []
+        self.journal_tasks: List[Dict] = []
         
     def initialize(self) -> None:
         """Initialize all components and validate configuration"""
@@ -59,16 +62,25 @@ class LogCollector:
             timeout=self.config.get_rsync_option('timeout', 300)
         )
         
+        # Initialize journal collector
+        self.journal_collector = JournalCollector(
+            ssh_user=self.config.get_rsync_option('ssh_user', 'root'),
+            ssh_port=self.config.get_rsync_option('ssh_port', 22),
+            ssh_ignore_host_key=self.config.get_rsync_option('ssh_ignore_host_key', True),
+            timeout=self.config.get_rsync_option('timeout', 300)
+        )
+        
         logger.info("Initialization complete")
     
     def build_jobs(self) -> List[RsyncJob]:
         """
-        Build rsync jobs based on inventory and configuration
+        Build rsync jobs and journal collection tasks based on inventory and configuration
         
         Returns:
             List of RsyncJob objects
         """
         jobs = []
+        journal_tasks = []
         
         # Get all hosts
         all_hosts = self.inventory.get_all_hosts()
@@ -102,34 +114,84 @@ class LogCollector:
             # Create jobs for each application
             for app_name in applications:
                 log_paths = self.config.get_log_paths_for_application(app_name)
+                journal_enabled = self.config.is_journal_enabled(app_name)
                 
-                if not log_paths:
-                    logger.warning(f"No log paths configured for application {app_name}")
-                    continue
+                # Create rsync jobs for file-based logs
+                if log_paths:
+                    # Create a job for each log path
+                    for log_path in log_paths:
+                        local_path = self.config.get_app_storage_path(hostname, app_name)
+                        
+                        job = RsyncJob(
+                            hostname=hostname,
+                            app_name=app_name,
+                            remote_path=log_path,
+                            local_path=local_path,
+                            ssh_user=self.config.get_rsync_option('ssh_user', 'root'),
+                            ssh_port=self.config.get_rsync_option('ssh_port', 22),
+                            ssh_ignore_host_key=self.config.get_rsync_option('ssh_ignore_host_key', True),
+                            flags=self.config.get_rsync_base_flags()
+                        )
+                        
+                        jobs.append(job)
                 
-                # Create a job for each log path
-                for log_path in log_paths:
+                # Create journal collection tasks
+                if journal_enabled:
                     local_path = self.config.get_app_storage_path(hostname, app_name)
+                    journal_mode = self.config.get_journal_mode(app_name)
                     
-                    job = RsyncJob(
-                        hostname=hostname,
-                        app_name=app_name,
-                        remote_path=log_path,
-                        local_path=local_path,
-                        ssh_user=self.config.get_rsync_option('ssh_user', 'root'),
-                        ssh_port=self.config.get_rsync_option('ssh_port', 22),
-                        flags=self.config.get_rsync_base_flags()
-                    )
-                    
-                    jobs.append(job)
+                    if journal_mode == 'binary':
+                        # Binary mode: rsync journal files directly
+                        journal_opts = self.config.get_journal_option('binary', {})
+                        remote_journal_paths = journal_opts.get('remote_journal_path', '/var/log/journal/')
+                        
+                        # Support both single path (string) and multiple paths (list)
+                        if isinstance(remote_journal_paths, str):
+                            remote_journal_paths = [remote_journal_paths]
+                        
+                        # Create rsync job for each journal directory
+                        for idx, remote_path in enumerate(remote_journal_paths):
+                            # Use suffix for multiple paths to keep them separate
+                            suffix = f"_{idx}" if len(remote_journal_paths) > 1 else ""
+                            subdir = f"journal{suffix}" if len(remote_journal_paths) > 1 else "journal"
+                            
+                            job = RsyncJob(
+                                hostname=hostname,
+                                app_name=f"{app_name}_journal{suffix}",
+                                remote_path=remote_path,
+                                local_path=local_path / subdir,
+                                ssh_user=self.config.get_rsync_option('ssh_user', 'root'),
+                                ssh_port=self.config.get_rsync_option('ssh_port', 22),
+                                ssh_ignore_host_key=self.config.get_rsync_option('ssh_ignore_host_key', True),
+                                flags=self.config.get_rsync_base_flags()
+                            )
+                            jobs.append(job)
+                    else:
+                        # Export mode: use journalctl to export logs
+                        task = {
+                            'hostname': hostname,
+                            'app_name': app_name,
+                            'local_path': local_path,
+                            'unit': self.journal_collector.get_unit_name_for_app(app_name),
+                            'since_days': self.config.get_date_filter_days(),
+                            'current_boot_only': True
+                        }
+                        journal_tasks.append(task)
+                
+                if not log_paths and not journal_enabled:
+                    logger.warning(f"No log paths or journal configured for application {app_name}")
         
-        logger.info(f"Built {len(jobs)} rsync jobs")
+        logger.info(
+            f"Built {len(jobs)} rsync jobs (including journal binary copies) "
+            f"and {len(journal_tasks)} journal export tasks"
+        )
         self.jobs = jobs
+        self.journal_tasks = journal_tasks
         return jobs
     
     async def collect_logs(self, dry_run: bool = False) -> Dict:
         """
-        Collect logs from all configured hosts
+        Collect logs from all configured hosts (both file-based and journal)
         
         Args:
             dry_run: If True, perform a dry-run without actually copying files
@@ -137,29 +199,67 @@ class LogCollector:
         Returns:
             Dictionary with collection results
         """
-        if not self.jobs:
+        if not self.jobs and not self.journal_tasks:
             self.build_jobs()
         
-        if not self.jobs:
-            logger.warning("No jobs to execute")
-            return {'total': 0, 'successful': 0, 'failed': 0}
-        
         mode = "DRY-RUN" if dry_run else "SYNC"
-        logger.info(f"Starting log collection ({mode}) for {len(self.jobs)} jobs...")
+        logger.info(
+            f"Starting log collection ({mode}) - "
+            f"{len(self.jobs)} rsync jobs, {len(self.journal_tasks)} journal tasks..."
+        )
         
-        # Execute all jobs
-        results = await self.rsync_manager.execute_jobs(self.jobs, dry_run=dry_run)
+        # Execute rsync jobs
+        rsync_summary = {'total': 0, 'successful': 0, 'failed': 0}
+        if self.jobs:
+            results = await self.rsync_manager.execute_jobs(self.jobs, dry_run=dry_run)
+            rsync_summary = self.rsync_manager.get_summary()
+            
+            logger.info(
+                f"Rsync complete: {rsync_summary['successful']}/{rsync_summary['total']} successful"
+            )
+            
+            if rsync_summary['failed'] > 0:
+                logger.warning(f"{rsync_summary['failed']} rsync jobs failed")
+                self.rsync_manager.write_failure_log()
         
-        # Get summary
-        summary = self.rsync_manager.get_summary()
+        # Execute journal collection tasks
+        journal_summary = {'total': 0, 'successful': 0, 'failed': 0}
+        if self.journal_tasks and not dry_run:
+            logger.info(f"Collecting journals from {len(self.journal_tasks)} tasks...")
+            
+            journal_results = []
+            for task in self.journal_tasks:
+                result = await self.journal_collector.collect_journal(**task)
+                journal_results.append(result)
+            
+            # Calculate journal summary
+            journal_summary['total'] = len(journal_results)
+            journal_summary['successful'] = sum(1 for r in journal_results if r['success'])
+            journal_summary['failed'] = journal_summary['total'] - journal_summary['successful']
+            
+            logger.info(
+                f"Journal collection complete: "
+                f"{journal_summary['successful']}/{journal_summary['total']} successful"
+            )
+            
+            if journal_summary['failed'] > 0:
+                logger.warning(f"{journal_summary['failed']} journal tasks failed")
         
-        logger.info(f"Collection complete: {summary['successful']}/{summary['total']} successful")
+        # Combined summary
+        combined_summary = {
+            'total': rsync_summary['total'] + journal_summary['total'],
+            'successful': rsync_summary['successful'] + journal_summary['successful'],
+            'failed': rsync_summary['failed'] + journal_summary['failed'],
+            'rsync': rsync_summary,
+            'journal': journal_summary
+        }
         
-        if summary['failed'] > 0:
-            logger.warning(f"{summary['failed']} jobs failed")
-            self.rsync_manager.write_failure_log()
+        logger.info(
+            f"Overall collection complete: "
+            f"{combined_summary['successful']}/{combined_summary['total']} successful"
+        )
         
-        return summary
+        return combined_summary
     
     async def explore_remote_files(self) -> Dict:
         """
@@ -194,29 +294,64 @@ class LogCollector:
         print("="*80 + "\n")
         
         for hostname in sorted(results.keys()):
-            print(f"Host: {hostname}")
+            print(f"Host: \033[1;36m{hostname}\033[0m")
             print("-" * 80)
             
             apps = results[hostname]
             for app_name in sorted(apps.keys()):
                 app_info = apps[app_name]
-                status = "✓ EXISTS" if app_info['exists'] else "✗ NOT FOUND"
+                # ANSI color codes: green for exists, red for not found
+                if app_info['exists']:
+                    status = "\033[92m✓ EXISTS\033[0m"  # Green
+                else:
+                    status = "\033[91m✗ NOT FOUND\033[0m"  # Red
                 print(f"  [{app_name}] {status}")
                 print(f"    Remote path: {app_info['remote_path']}")
                 
                 if app_info['exists']:
-                    # Show first few lines of output
+                    # Show first few lines of output, filtering out noise
                     output_lines = app_info['output'].strip().split('\n')
-                    if output_lines:
+                    
+                    # Filter out unwanted lines
+                    filtered_lines = []
+                    for line in output_lines:
+                        # Skip empty lines
+                        if not line.strip():
+                            continue
+                        # Skip "total" line from ls -la
+                        if line.strip().startswith('total '):
+                            continue
+                        # Skip . and .. entries
+                        if line.split()[-1] in ['.', '..']:
+                            continue
+                        filtered_lines.append(line)
+                    
+                    if filtered_lines:
                         print(f"    Files found:")
-                        for line in output_lines[:5]:  # Show first 5 files
+                        for line in filtered_lines[:5]:  # Show first 5 files
                             print(f"      {line}")
-                        if len(output_lines) > 5:
-                            print(f"      ... and {len(output_lines) - 5} more")
+                        if len(filtered_lines) > 5:
+                            print(f"      ... and {len(filtered_lines) - 5} more")
+                    else:
+                        print(f"    Path exists but no files to display")
                 else:
                     error = app_info['output'].strip()
                     if error:
-                        print(f"    Error: {error}")
+                        # Filter out SSH warnings/noise
+                        error_lines = []
+                        for line in error.split('\n'):
+                            line = line.strip()
+                            # Skip SSH host key warnings
+                            if 'Permanently added' in line and 'to the list of known hosts' in line:
+                                continue
+                            # Skip Warning: prefix if it was just about host keys
+                            if line.startswith('Warning:') and 'Permanently added' in line:
+                                continue
+                            if line:
+                                error_lines.append(line)
+                        
+                        if error_lines:
+                            print(f"    Error: {'; '.join(error_lines)}")
                 
                 print()
             
@@ -258,12 +393,26 @@ class LogCollector:
             print(f"  Groups: {', '.join(sorted(groups))}")
             print(f"  Applications: {', '.join(sorted(applications)) if applications else 'None'}")
             
-            # Show log paths for each application
+            # Show log paths and journal settings for each application
             for app_name in sorted(applications):
                 log_paths = self.config.get_log_paths_for_application(app_name)
+                journal_enabled = self.config.is_journal_enabled(app_name)
+                
                 print(f"    [{app_name}]")
-                for path in log_paths:
-                    print(f"      - {path}")
+                if log_paths:
+                    print(f"      File-based logs:")
+                    for path in log_paths:
+                        print(f"        - {path}")
+                if journal_enabled:
+                    journal_mode = self.config.get_journal_mode(app_name)
+                    if journal_mode == 'binary':
+                        print(f"      Journal: enabled (binary copy - minimal remote impact)")
+                    else:
+                        unit = self.journal_collector.get_unit_name_for_app(app_name)
+                        unit_str = f" (unit: {unit})" if unit else " (all units)"
+                        print(f"      Journal: enabled (export mode{unit_str})")
+                if not log_paths and not journal_enabled:
+                    print(f"      (no logs configured)")
             
             print()
 
