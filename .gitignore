@@ -40,5 +40,5 @@ collected_logs/
 Thumbs.db
 
 # Local config overrides
-config/hosts
+config/*/hosts
 config/config.local.yaml
