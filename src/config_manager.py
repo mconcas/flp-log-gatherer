@@ -43,11 +43,12 @@ class ConfigManager:
         """Set default values for missing configuration options"""
         defaults = {
             'max_parallel_jobs': 5,
-            'compress': True,
+            'compress': False,  # Disable post-sync compression by default
             'local_storage': 'logs',
             'ssh_user': 'root',
             'ssh_port': 22,
             'ssh_ignore_host_key': True,  # Ignore host key verification by default
+            'use_compression': False,  # Disable rsync compression by default (reduces remote CPU load)
             'additional_flags': ['-a', '--progress'],
             'retry_count': 3,
             'retry_delay': 5,
@@ -218,10 +219,12 @@ class ConfigManager:
         Returns:
             List of rsync command flags
         """
-        flags = self.rsync_options.get('additional_flags', ['-a'])
+        flags = self.rsync_options.get('additional_flags', ['-a']).copy()
         
-        # Add compression flag if enabled (but note: we do local compression)
-        # For rsync, we might not want network compression to avoid remote CPU load
+        # Add compression flag if enabled in config
+        use_compression = self.rsync_options.get('use_compression', False)
+        if use_compression and '-z' not in flags and '--compress' not in flags:
+            flags.append('-z')
         
         return flags
     

@@ -138,7 +138,8 @@ node_groups:
 ```yaml
 rsync_options:
   max_parallel_jobs: 5
-  compress: true
+  compress: false  # Set to true to auto-compress after each sync
+  use_compression: false  # Set to true to enable rsync -z compression during transfer
   local_storage: /var/logs/collected  # Absolute or relative path
   ssh_user: root
   ssh_port: 22
@@ -286,21 +287,21 @@ Collect logs from all configured nodes:
 
 **Options**:
 - `--dry-run` - Show what would be synced without copying files
-- `--no-compress` - Skip compression of collected logs
+- `--compress` - Compress collected logs after syncing (creates tar.gz archives)
 - `--show-summary` - Display configuration summary and exit
 - `-v, --verbose` - Enable verbose output
 
 **Examples**:
 
 ```bash
-# Normal sync with compression
+# Normal sync (no compression)
 ./main.py sync
+
+# Sync with automatic compression
+./main.py sync --compress
 
 # Dry-run to preview
 ./main.py sync --dry-run
-
-# Sync without compression
-./main.py sync --no-compress
 
 # Show configuration
 ./main.py sync --show-summary

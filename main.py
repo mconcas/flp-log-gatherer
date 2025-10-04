@@ -14,16 +14,51 @@ from src.probe_manager import ProbeManager
 from src.inventory_parser import InventoryParser
 
 
+class ColoredFormatter(logging.Formatter):
+    """Custom formatter with colored output based on log level"""
+    
+    # ANSI color codes
+    COLORS = {
+        'DEBUG': '\033[36m',      # Cyan
+        'INFO': '\033[32m',       # Green
+        'WARNING': '\033[33m',    # Yellow
+        'ERROR': '\033[31m',      # Red
+        'CRITICAL': '\033[1;31m', # Bold Red
+    }
+    RESET = '\033[0m'
+    
+    def format(self, record):
+        # Add color to the level name
+        levelname = record.levelname
+        if levelname in self.COLORS:
+            record.levelname = f"{self.COLORS[levelname]}{levelname}{self.RESET}"
+        
+        # Format the message
+        result = super().format(record)
+        
+        return result
+
+
 # Set up logging
 def setup_logging(verbose: bool = False):
     """Configure logging based on verbosity level"""
     level = logging.DEBUG if verbose else logging.INFO
     
-    logging.basicConfig(
-        level=level,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    # Create handler
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(level)
+    
+    # Create and set formatter
+    formatter = ColoredFormatter(
+        fmt='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
+    handler.setFormatter(formatter)
+    
+    # Configure root logger
+    logging.root.setLevel(level)
+    logging.root.handlers = []
+    logging.root.addHandler(handler)
 
 
 async def run_sync(args):
@@ -238,8 +273,11 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Normal sync with compression
+  # Normal sync (no compression)
   %(prog)s sync
+  
+  # Sync with automatic compression
+  %(prog)s sync --compress
   
   # Dry-run to see what would be synced
   %(prog)s sync --dry-run
@@ -274,8 +312,8 @@ Examples:
     sync_parser = subparsers.add_parser('sync', help='Synchronize logs from remote hosts')
     sync_parser.add_argument('--dry-run', action='store_true',
                             help='Perform a dry-run without actually copying files')
-    sync_parser.add_argument('--no-compress', dest='compress', action='store_false',
-                            help='Do not compress collected logs')
+    sync_parser.add_argument('--compress', action='store_true',
+                            help='Compress collected logs after syncing (creates tar.gz archives)')
     sync_parser.add_argument('--show-summary', action='store_true',
                             help='Show configuration summary and exit')
     
@@ -307,7 +345,7 @@ Examples:
     if not args.command:
         args.command = 'sync'
         args.dry_run = False
-        args.compress = True
+        args.compress = False
         args.show_summary = False
     
     # Execute command

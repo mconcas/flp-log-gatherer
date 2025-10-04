@@ -40,13 +40,16 @@ rsync_options:
   # Maximum number of parallel rsync jobs
   max_parallel_jobs: 5
 
-  # Enable compression of collected logs
-  compress: true
+  # Enable post-sync compression of collected logs (creates tar.gz archives)
+  # Set to false to keep logs uncompressed (default, saves CPU and allows immediate access)
+  # Set to true to automatically compress logs after each sync (saves disk space)
+  # Note: You can always compress later using the 'compress' command
+  compress: false
 
   # Local directory where logs will be stored
   # Can be absolute path (e.g., /var/logs/collected) or relative to this directory
   # Directory will be created automatically if it doesn't exist
-  local_storage: /data/logs
+  local_storage: /data/logs/p2-staging
 
   # SSH user for remote connections
   ssh_user: root
@@ -58,6 +61,11 @@ rsync_options:
   # Set to true to skip fingerprint checking (useful for automated scripts)
   # WARNING: This reduces security - only use in trusted networks
   ssh_ignore_host_key: true
+
+  # Enable rsync compression during transfer (-z flag)
+  # Set to false to reduce CPU load on remote hosts (recommended for fast networks)
+  # Set to true for slow/high-latency connections where bandwidth is limited
+  use_compression: true
 
   # Additional rsync flags
   # -a: archive mode (preserves permissions, timestamps, etc.)
