@@ -8,9 +8,9 @@ applications:
   elasticsearch:
     log_paths:
       - /var/log/elasticsearch/elastic-*.log.*
-    journal: false  # Use file-based logs only
-    journal_mode: binary  # Optional: not used when journal: false
-  
+    journal: false # Use file-based logs only
+    journal_mode: binary # Optional: not used when journal: false
+
   consul:
     log_paths:
       - /var/log/consul
@@ -19,8 +19,8 @@ applications:
   system:
     # log_paths:
     #   - /var/log/syslog*
-    journal: true  # Enable systemd journal collection
-    journal_mode: binary  # 'binary' (copy journal files) or 'export' (journalctl export)
+    journal: true # Enable systemd journal collection
+    journal_mode: binary # 'binary' (copy journal files) or 'export' (journalctl export)
 
 # Define which applications run on which node groups
 # Group names should match those in your Ansible inventory
@@ -93,7 +93,7 @@ journal_options:
   #   'binary': Copy journal files directly (RECOMMENDED - minimal remote impact, complete data)
   #   'export': Use journalctl to export logs (processes on remote, more flexible filtering)
   default_mode: binary
-  
+
   # Binary mode settings (when journal_mode: binary)
   binary:
     # Remote journal directory (or directories)
@@ -104,26 +104,26 @@ journal_options:
     remote_journal_path:
       - /var/log/journal/
       - /run/log/journal/
-    
+
     # Or single path:
     # remote_journal_path: /var/log/journal/
-    
+
     # Copy only current boot's journal (reduces transfer size significantly)
     current_boot_only: true
-    
+
   # Export mode settings (when journal_mode: export)
   export:
     # Output format: 'export', 'json', 'json-pretty'
     # 'export': Structured format with all fields (best for complete data)
     # 'json': JSON format (best for Logstash)
     output_format: export
-    
+
     # Enable SSH compression for journal transfer
     ssh_compression: true
-    
+
     # Priority filter: only collect logs at this level or higher
     # Set to null to collect all priorities
     priority_filter: null
-    
+
     # Maximum lines to collect per journal query (safety limit)
     max_lines: null
