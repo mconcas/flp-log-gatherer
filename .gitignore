@@ -24,6 +24,7 @@ wheels/
 venv/
 ENV/
 env/
+.direnv
 
 # Collected logs (if using relative path)
 logs/
