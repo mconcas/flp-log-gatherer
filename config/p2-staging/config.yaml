@@ -102,7 +102,7 @@ journal_options:
     #   - /var/log/journal/  (persistent storage)
     #   - /run/log/journal/  (volatile/runtime storage)
     remote_journal_path:
-      - /var/log/journal/
+      # - /var/log/journal/
       - /run/log/journal/
 
     # Or single path:

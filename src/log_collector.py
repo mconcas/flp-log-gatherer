@@ -317,9 +317,15 @@ class LogCollector:
         print("REMOTE FILE EXPLORATION RESULTS")
         print("="*80 + "\n")
 
+        total_size_all_hosts = 0
+        total_files_all_hosts = 0
+
         for hostname in sorted(results.keys()):
             print(f"Host: \033[1;36m{hostname}\033[0m")
             print("-" * 80)
+
+            host_total_size = 0
+            host_total_files = 0
 
             apps = results[hostname]
             for app_name in sorted(apps.keys()):
@@ -329,38 +335,48 @@ class LogCollector:
                     status = "\033[92m✓ EXISTS\033[0m"  # Green
                 else:
                     status = "\033[91m✗ NOT FOUND\033[0m"  # Red
+                    
                 print(f"  [{app_name}] {status}")
                 print(f"    Remote path: {app_info['remote_path']}")
 
                 if app_info['exists']:
-                    # Show first few lines of output, filtering out noise
-                    output_lines = app_info['output'].strip().split('\n')
-
-                    # Filter out unwanted lines
-                    filtered_lines = []
-                    for line in output_lines:
-                        # Skip empty lines
-                        if not line.strip():
-                            continue
-                        # Skip "total" line from ls -la
-                        if line.strip().startswith('total '):
-                            continue
-                        # Skip . and .. entries
-                        if line.split()[-1] in ['.', '..']:
-                            continue
-                        filtered_lines.append(line)
-
-                    if filtered_lines:
-                        print(f"    Files found:")
-                        for line in filtered_lines[:5]:  # Show first 5 files
-                            print(f"      {line}")
-                        if len(filtered_lines) > 5:
-                            print(
-                                f"      ... and {len(filtered_lines) - 5} more")
+                    file_count = app_info.get('file_count', 0)
+                    total_size_human = app_info.get('total_size_human', '0 B')
+                    total_size_bytes = app_info.get('total_size_bytes', 0)
+                    
+                    # Add to host totals
+                    host_total_size += total_size_bytes
+                    host_total_files += file_count
+                    
+                    if file_count > 0:
+                        print(f"    \033[1mTotal: {file_count} files, {total_size_human}\033[0m")
+                        
+                        # Show detailed file listing
+                        files = app_info.get('files', [])
+                        if files:
+                            print(f"    Files found:")
+                            # Sort files by size (largest first) for better visibility
+                            sorted_files = sorted(files, key=lambda f: f.get('size_bytes', 0), reverse=True)
+                            
+                            # Show up to 5 largest files
+                            for file_info in sorted_files[:5]:
+                                name = file_info.get('name', 'unknown')
+                                size_human = file_info.get('size_human', '0 B')
+                                mod_time = file_info.get('mod_time', '')
+                                is_dir = file_info.get('is_directory', False)
+                                
+                                if is_dir:
+                                    print(f"      \033[94m{name}/\033[0m (directory)")
+                                else:
+                                    print(f"      {name} - {size_human} - {mod_time}")
+                            
+                            if len(sorted_files) > 5:
+                                remaining = len(sorted_files) - 5
+                                print(f"      ... and {remaining} more files")
                     else:
-                        print(f"    Path exists but no files to display")
+                        print(f"    Path exists but no files found")
                 else:
-                    error = app_info['output'].strip()
+                    error = app_info.get('error') or app_info.get('output', '').strip()
                     if error:
                         # Filter out SSH warnings/noise
                         error_lines = []
@@ -380,7 +396,23 @@ class LogCollector:
 
                 print()
 
+            # Show host summary if there are files
+            if host_total_files > 0:
+                from .rsync_manager import human_readable_size
+                host_total_human = human_readable_size(host_total_size)
+                print(f"  \033[1;33mHost Total: {host_total_files} files, {host_total_human}\033[0m")
+                total_size_all_hosts += host_total_size
+                total_files_all_hosts += host_total_files
+
             print()
+
+        # Show overall summary
+        if total_files_all_hosts > 0:
+            from .rsync_manager import human_readable_size
+            total_size_human = human_readable_size(total_size_all_hosts)
+            print("="*80)
+            print(f"\033[1;32mOVERALL TOTAL: {total_files_all_hosts} files, {total_size_human}\033[0m")
+            print("="*80)
 
     def print_summary(self) -> None:
         """Print summary of configured hosts and applications"""

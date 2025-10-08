@@ -4,6 +4,7 @@ Rsync job manager for parallel log collection
 import subprocess
 import asyncio
 import logging
+import re
 from typing import List, Dict, Optional, Tuple
 from pathlib import Path
 from datetime import datetime
@@ -16,6 +17,100 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+
+def human_readable_size(size_bytes: int) -> str:
+    """
+    Convert bytes to human-readable format
+    
+    Args:
+        size_bytes: Size in bytes
+    
+    Returns:
+        Human-readable string (e.g., "1.5 MB", "3.2 GB")
+    """
+    if size_bytes == 0:
+        return "0 B"
+    
+    units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
+    unit_index = 0
+    size = float(size_bytes)
+    
+    while size >= 1024.0 and unit_index < len(units) - 1:
+        size /= 1024.0
+        unit_index += 1
+    
+    if unit_index == 0:  # Bytes
+        return f"{int(size)} {units[unit_index]}"
+    else:
+        return f"{size:.1f} {units[unit_index]}"
+
+
+def parse_ls_output(ls_output: str) -> List[Dict[str, any]]:
+    """
+    Parse ls -la output to extract file information
+    Handles both directory listings and find+ls output
+    
+    Args:
+        ls_output: Output from ls -la command or find+ls command
+    
+    Returns:
+        List of dictionaries with file information
+    """
+    files = []
+    lines = ls_output.strip().split('\n')
+    
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+            
+        # Skip total line from ls -la
+        if line.startswith('total '):
+            continue
+            
+        # Skip error messages
+        if 'No such file or directory' in line or 'Permission denied' in line:
+            continue
+            
+        # Parse ls -la format: permissions links owner group size date time name
+        # Example: -rw-r--r-- 1 root root 1234 Oct 8 12:34 filename.log
+        parts = line.split()
+        
+        if len(parts) < 9:  # Need at least 9 parts for a valid ls -la line
+            continue
+            
+        permissions = parts[0]
+        
+        # Skip . and .. entries
+        filename = ' '.join(parts[8:])  # Handle filenames with spaces
+        if filename in ['.', '..']:
+            continue
+            
+        # Skip if it's a directory (we want actual files for size calculation)
+        is_directory = permissions.startswith('d')
+        if is_directory:
+            continue
+            
+        try:
+            size_bytes = int(parts[4])
+            
+            # Get modification time (parts 5, 6, 7)
+            mod_time = ' '.join(parts[5:8])
+            
+            files.append({
+                'name': filename,
+                'size_bytes': size_bytes,
+                'size_human': human_readable_size(size_bytes),
+                'permissions': permissions,
+                'is_directory': is_directory,
+                'mod_time': mod_time
+            })
+        except (ValueError, IndexError):
+            # If we can't parse the line properly, skip it
+            continue
+    
+    return files
 
 
 @dataclass
@@ -235,15 +330,21 @@ class RsyncManager:
             attempts=attempts
         )
 
-    async def check_remote_file_exists(self, job: RsyncJob) -> Tuple[bool, str]:
+    async def check_remote_file_exists(self, job: RsyncJob) -> Tuple[bool, Dict]:
         """
-        Check if remote files exist (explore mode)
+        Check if remote files exist and get their information (explore mode)
 
         Args:
             job: RsyncJob to check
 
         Returns:
-            Tuple of (exists, message)
+            Tuple of (exists, file_info_dict)
+            file_info_dict contains:
+            - 'files': List of file information dictionaries
+            - 'total_size_bytes': Total size of all files in bytes
+            - 'total_size_human': Human-readable total size
+            - 'file_count': Number of files found
+            - 'error': Error message if any
         """
         ssh_target = f"{job.ssh_user}@{job.hostname}"
 
@@ -261,13 +362,16 @@ class RsyncManager:
                 '-o', 'LogLevel=ERROR'  # Suppress SSH warnings
             ])
 
+        # Use find command to recursively get all files with sizes
+        # This handles directories that contain subdirectories with actual files
+        find_cmd = f'find {job.remote_path} -type f -exec ls -la {{}} \\; 2>/dev/null || ls -la {job.remote_path} 2>&1'
         cmd.extend([
             ssh_target,
-            f'ls -la {job.remote_path} 2>&1'
+            find_cmd
         ])
 
         try:
-            logger.info(
+            logger.debug(
                 f"[{job.hostname}/{job.app_name}] Checking remote path: {job.remote_path}")
 
             process = await asyncio.create_subprocess_exec(
@@ -285,14 +389,54 @@ class RsyncManager:
             stderr_str = stderr.decode('utf-8', errors='replace')
 
             if process.returncode == 0:
-                return True, stdout_str
+                # Parse the ls output to extract file information
+                files = parse_ls_output(stdout_str)
+                
+                # Calculate totals
+                total_size_bytes = sum(f['size_bytes'] for f in files if not f['is_directory'])
+                file_count = len([f for f in files if not f['is_directory']])
+                
+                file_info = {
+                    'files': files,
+                    'total_size_bytes': total_size_bytes,
+                    'total_size_human': human_readable_size(total_size_bytes),
+                    'file_count': file_count,
+                    'raw_output': stdout_str,  # Keep raw output for backward compatibility
+                    'error': None
+                }
+                
+                return True, file_info
             else:
-                return False, stderr_str
+                file_info = {
+                    'files': [],
+                    'total_size_bytes': 0,
+                    'total_size_human': '0 B',
+                    'file_count': 0,
+                    'raw_output': stderr_str,
+                    'error': stderr_str
+                }
+                return False, file_info
 
         except asyncio.TimeoutError:
-            return False, "Timeout while checking remote files"
+            file_info = {
+                'files': [],
+                'total_size_bytes': 0,
+                'total_size_human': '0 B',
+                'file_count': 0,
+                'raw_output': '',
+                'error': "Timeout while checking remote files"
+            }
+            return False, file_info
         except Exception as e:
-            return False, str(e)
+            file_info = {
+                'files': [],
+                'total_size_bytes': 0,
+                'total_size_human': '0 B',
+                'file_count': 0,
+                'raw_output': '',
+                'error': str(e)
+            }
+            return False, file_info
 
     async def execute_jobs(self, jobs: List[RsyncJob], dry_run: bool = False) -> List[JobResult]:
         """
@@ -337,11 +481,11 @@ class RsyncManager:
 
         async def bounded_explore(job: RsyncJob):
             async with semaphore:
-                exists, output = await self.check_remote_file_exists(job)
+                exists, file_info = await self.check_remote_file_exists(job)
                 return {
                     'job': job,
                     'exists': exists,
-                    'output': output
+                    'file_info': file_info
                 }
 
         tasks = [bounded_explore(job) for job in jobs]
@@ -353,10 +497,17 @@ class RsyncManager:
             job = result['job']
             if job.hostname not in organized:
                 organized[job.hostname] = {}
+            
+            file_info = result['file_info']
             organized[job.hostname][job.app_name] = {
                 'remote_path': job.remote_path,
                 'exists': result['exists'],
-                'output': result['output']
+                'files': file_info.get('files', []),
+                'total_size_bytes': file_info.get('total_size_bytes', 0),
+                'total_size_human': file_info.get('total_size_human', '0 B'),
+                'file_count': file_info.get('file_count', 0),
+                'output': file_info.get('raw_output', ''),  # Keep for backward compatibility
+                'error': file_info.get('error')
             }
 
         return organized
