@@ -3,7 +3,7 @@ requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "flp-gatherer"
+name = "flp-log-gatherer"
 version = "1.0.0"
 description = "Collect logs from heterogeneous nodes using rsync and systemd journal"
 readme = "README.md"
@@ -35,7 +35,7 @@ Homepage = "https://github.com/mconcas/log-puller"
 Repository = "https://github.com/mconcas/log-puller"
 
 [project.scripts]
-flp-gatherer = "src.cli:main"
+flp-log-gatherer = "src.cli:main"
 
 [tool.setuptools]
 packages = ["src"]

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Setup script for flp-crawler
+Setup script for flp-log-gatherer
 """
 from setuptools import setup, find_packages
 from pathlib import Path
@@ -10,7 +10,7 @@ readme_file = Path(__file__).parent / "README.md"
 long_description = readme_file.read_text() if readme_file.exists() else ""
 
 setup(
-    name="flp-gatherer",
+    name="flp-log-gatherer",
     version="1.0.0",
     description="Collect logs from heterogeneous nodes using rsync and systemd journal",
     long_description=long_description,
@@ -25,7 +25,7 @@ setup(
     ],
     entry_points={
         "console_scripts": [
-            "flp-gatherer=src.cli:main",
+            "flp-log-gatherer=src.cli:main",
         ],
     },
     classifiers=[

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-flp-gatherer - Main CLI application for collecting logs from heterogeneous nodes
+flp-log-gatherer - Main CLI application for collecting logs from heterogeneous nodes
 """
 import argparse
 import asyncio
@@ -269,7 +269,7 @@ def run_compress(args):
 def main():
     """Main entry point"""
     parser = argparse.ArgumentParser(
-        description='flp-gatherer - Collect logs from heterogeneous nodes using rsync',
+        description='flp-log-gatherer - Collect logs from heterogeneous nodes using rsync',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

@@ -1,5 +1,5 @@
 """
-Configuration manager for flp-gatherer
+Configuration manager for flp-log-gatherer
 """
 import yaml
 from typing import Dict, List, Any, Optional

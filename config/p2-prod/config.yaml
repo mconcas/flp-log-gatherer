@@ -1,4 +1,4 @@
-# flp-gatherer configuration file
+# flp-log-gatherer configuration file
 # This file defines the mapping between applications, their log paths,
 # and which node groups they belong to
 

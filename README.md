@@ -1,4 +1,4 @@
-# flp-gatherer
+# flp-log-gatherer
 
 > AI disclaimer: this project has been heavily coded with the help of AI tools.
 
