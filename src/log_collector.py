@@ -335,7 +335,7 @@ class LogCollector:
                     status = "\033[92m✓ EXISTS\033[0m"  # Green
                 else:
                     status = "\033[91m✗ NOT FOUND\033[0m"  # Red
-                    
+
                 print(f"  [{app_name}] {status}")
                 print(f"    Remote path: {app_info['remote_path']}")
 
@@ -343,40 +343,45 @@ class LogCollector:
                     file_count = app_info.get('file_count', 0)
                     total_size_human = app_info.get('total_size_human', '0 B')
                     total_size_bytes = app_info.get('total_size_bytes', 0)
-                    
+
                     # Add to host totals
                     host_total_size += total_size_bytes
                     host_total_files += file_count
-                    
+
                     if file_count > 0:
-                        print(f"    \033[1mTotal: {file_count} files, {total_size_human}\033[0m")
-                        
+                        print(
+                            f"    \033[1mTotal: {file_count} files, {total_size_human}\033[0m")
+
                         # Show detailed file listing
                         files = app_info.get('files', [])
                         if files:
                             print(f"    Files found:")
                             # Sort files by size (largest first) for better visibility
-                            sorted_files = sorted(files, key=lambda f: f.get('size_bytes', 0), reverse=True)
-                            
+                            sorted_files = sorted(files, key=lambda f: f.get(
+                                'size_bytes', 0), reverse=True)
+
                             # Show up to 5 largest files
                             for file_info in sorted_files[:5]:
                                 name = file_info.get('name', 'unknown')
                                 size_human = file_info.get('size_human', '0 B')
                                 mod_time = file_info.get('mod_time', '')
                                 is_dir = file_info.get('is_directory', False)
-                                
+
                                 if is_dir:
-                                    print(f"      \033[94m{name}/\033[0m (directory)")
+                                    print(
+                                        f"      \033[94m{name}/\033[0m (directory)")
                                 else:
-                                    print(f"      {name} - {size_human} - {mod_time}")
-                            
+                                    print(
+                                        f"      {name} - {size_human} - {mod_time}")
+
                             if len(sorted_files) > 5:
                                 remaining = len(sorted_files) - 5
                                 print(f"      ... and {remaining} more files")
                     else:
                         print(f"    Path exists but no files found")
                 else:
-                    error = app_info.get('error') or app_info.get('output', '').strip()
+                    error = app_info.get('error') or app_info.get(
+                        'output', '').strip()
                     if error:
                         # Filter out SSH warnings/noise
                         error_lines = []
@@ -400,7 +405,8 @@ class LogCollector:
             if host_total_files > 0:
                 from .rsync_manager import human_readable_size
                 host_total_human = human_readable_size(host_total_size)
-                print(f"  \033[1;33mHost Total: {host_total_files} files, {host_total_human}\033[0m")
+                print(
+                    f"  \033[1;33mHost Total: {host_total_files} files, {host_total_human}\033[0m")
                 total_size_all_hosts += host_total_size
                 total_files_all_hosts += host_total_files
 
@@ -411,8 +417,107 @@ class LogCollector:
             from .rsync_manager import human_readable_size
             total_size_human = human_readable_size(total_size_all_hosts)
             print("="*80)
-            print(f"\033[1;32mOVERALL TOTAL: {total_files_all_hosts} files, {total_size_human}\033[0m")
+            print(
+                f"\033[1;32mOVERALL TOTAL: {total_files_all_hosts} files, {total_size_human}\033[0m")
             print("="*80)
+
+        # Generate per-application summary in Markdown format
+        self._print_application_summary_markdown(results)
+
+    def _print_application_summary_markdown(self, results: Dict) -> None:
+        """
+        Print per-application summary in Markdown format for easy copy-pasting
+        
+        Args:
+            results: Exploration results from explore_remote_files()
+        """
+        from .rsync_manager import human_readable_size
+        
+        # Aggregate data by application across all hosts
+        app_summary = {}
+        
+        for hostname, apps in results.items():
+            for app_name, app_info in apps.items():
+                if app_info['exists']:
+                    file_count = app_info.get('file_count', 0)
+                    total_size_bytes = app_info.get('total_size_bytes', 0)
+                    
+                    if app_name not in app_summary:
+                        app_summary[app_name] = {
+                            'total_files': 0,
+                            'total_size_bytes': 0,
+                            'host_count': 0,
+                            'hosts': []
+                        }
+                    
+                    app_summary[app_name]['total_files'] += file_count
+                    app_summary[app_name]['total_size_bytes'] += total_size_bytes
+                    if file_count > 0:  # Only count hosts that actually have files
+                        app_summary[app_name]['host_count'] += 1
+                        app_summary[app_name]['hosts'].append(hostname)
+        
+        if not app_summary:
+            return
+            
+        print("\n" + "="*80)
+        print("APPLICATION SUMMARY (Markdown Format)")
+        print("="*80)
+        print("\n```markdown")
+        print("# Log Collection Exploration Summary")
+        print()
+        print("## Per-Application Overview")
+        print()
+        print("| Application | Files Found | Total Size | Hosts with Files |")
+        print("|-------------|-------------|------------|------------------|")
+        
+        # Calculate overall totals
+        grand_total_files = 0
+        grand_total_size = 0
+        
+        # Sort applications by total size (largest first)
+        sorted_apps = sorted(app_summary.items(), 
+                           key=lambda x: x[1]['total_size_bytes'], 
+                           reverse=True)
+        
+        for app_name, summary in sorted_apps:
+            files = summary['total_files']
+            size_human = human_readable_size(summary['total_size_bytes'])
+            host_count = summary['host_count']
+            
+            grand_total_files += files
+            grand_total_size += summary['total_size_bytes']
+            
+            print(f"| `{app_name}` | {files:,} | {size_human} | {host_count} |")
+        
+        # Add totals row
+        grand_total_human = human_readable_size(grand_total_size)
+        print(f"| **TOTAL** | **{grand_total_files:,}** | **{grand_total_human}** | **{len(results)}** |")
+        
+        print()
+        print("## Detailed Breakdown")
+        print()
+        
+        for app_name, summary in sorted_apps:
+            if summary['total_files'] > 0:
+                files = summary['total_files']
+                size_human = human_readable_size(summary['total_size_bytes'])
+                hosts = summary['hosts']
+                
+                print(f"### {app_name}")
+                print(f"- **Files:** {files:,}")
+                print(f"- **Total Size:** {size_human}")
+                print(f"- **Hosts:** {len(hosts)} host(s)")
+                if len(hosts) <= 10:  # Show host list if not too many
+                    print(f"- **Host List:** {', '.join(sorted(hosts))}")
+                else:
+                    print(f"- **Host List:** {', '.join(sorted(hosts[:10]))} + {len(hosts)-10} more")
+                print()
+        
+        from datetime import datetime
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        print(f"*Generated on {timestamp}*")
+        print("```")
+        print("="*80)
 
     def print_summary(self) -> None:
         """Print summary of configured hosts and applications"""

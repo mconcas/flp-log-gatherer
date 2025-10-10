@@ -85,6 +85,8 @@ class ConfigManager:
             List of log file paths/patterns
         """
         app_config = self.applications.get(app_name, {})
+        if app_config is None:
+            app_config = {}
         return app_config.get('log_paths', [])
 
     def is_journal_enabled(self, app_name: str) -> bool:
@@ -98,6 +100,8 @@ class ConfigManager:
             True if journal collection is enabled
         """
         app_config = self.applications.get(app_name, {})
+        if app_config is None:
+            app_config = {}
         return app_config.get('journal', False)
 
     def get_journal_mode(self, app_name: str) -> str:
@@ -111,6 +115,8 @@ class ConfigManager:
             'binary' or 'export' mode
         """
         app_config = self.applications.get(app_name, {})
+        if app_config is None:
+            app_config = {}
         # Check app-specific mode, fallback to default, then binary
         mode = app_config.get('journal_mode')
         if mode:
@@ -254,12 +260,25 @@ class ConfigManager:
 
         # Check that all applications have log paths or journal enabled
         for app_name, app_config in self.applications.items():
+            # Handle case where app_config is None (empty YAML entry)
+            if app_config is None:
+                app_config = {}
+            
             has_log_paths = 'log_paths' in app_config and app_config['log_paths']
             has_journal = app_config.get('journal', False)
 
             if not has_log_paths and not has_journal:
-                errors.append(
-                    f"Application '{app_name}' has no log_paths and journal is not enabled")
+                # Only warn about empty applications if they're actually used in node_groups
+                app_used = False
+                for group, apps in self.node_groups.items():
+                    if app_name in apps:
+                        app_used = True
+                        break
+                
+                if app_used:
+                    errors.append(
+                        f"Application '{app_name}' is used in node groups but has no log_paths and journal is not enabled")
+                # If not used, just ignore it (no error)
 
         return errors
 

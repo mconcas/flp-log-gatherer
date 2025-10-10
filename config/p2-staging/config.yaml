@@ -1,9 +1,23 @@
-# flp-log-gatherer configuration file
 # This file defines the mapping between applications, their log paths,
-# and which node groups they belong to
+# and which Ansible node groups they belong to
 
 # Define applications and their log file paths
+
 applications:
+  # Nginx
+  nginx:
+    log_paths:
+      - /var/log/nginx
+    journal: false # Use file-based logs only
+    journal_mode: binary # Optional: not used when journal: false
+
+  # Zookeper
+  zookeeper:
+    log_paths:
+      - /var/log/zookeeper/
+    journal: false # Use file-based logs only
+    journal_mode: binary # Optional: not used when journal: false
+
   # Elasticsearch database
   elasticsearch:
     log_paths:
@@ -15,6 +29,29 @@ applications:
     log_paths:
       - /var/log/consul
 
+  kafka:
+    log_paths:
+      - /var/log/kafka
+
+  apricot:
+    log_paths:
+      - /var/log/o2-apricot.log
+    journal: false # Use file-based logs only
+    journal_mode: binary # Optional: not used when journal: false
+
+  vault:
+  bookkeeping:
+  infologger:
+  nomad:
+  telegraf:
+  influxdb:
+  kibana:
+  logstash:
+  qc:
+  mesos:
+  ecs:
+  
+  #####################################################################################
   # System logs
   system:
     # log_paths:
@@ -32,8 +69,32 @@ node_groups:
   _all_nodes:
     - system
 
+  head:
+    - apricot
+
   elasticsearch:
     - elasticsearch
+
+  index-page:
+    - nginx
+
+  zookeepers:
+    - zookeeper
+
+  kafka-aliecs:
+    - kafka
+
+  notification:
+    - kafka
+
+  kafka-metric-processing:
+    - kafka
+
+  kafka-rest:
+    - kafka
+
+  consul-ui:
+    - consul
 
 # Rsync and collection options
 rsync_options:

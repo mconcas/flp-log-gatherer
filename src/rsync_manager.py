@@ -22,24 +22,24 @@ logger = logging.getLogger(__name__)
 def human_readable_size(size_bytes: int) -> str:
     """
     Convert bytes to human-readable format
-    
+
     Args:
         size_bytes: Size in bytes
-    
+
     Returns:
         Human-readable string (e.g., "1.5 MB", "3.2 GB")
     """
     if size_bytes == 0:
         return "0 B"
-    
+
     units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
     unit_index = 0
     size = float(size_bytes)
-    
+
     while size >= 1024.0 and unit_index < len(units) - 1:
         size /= 1024.0
         unit_index += 1
-    
+
     if unit_index == 0:  # Bytes
         return f"{int(size)} {units[unit_index]}"
     else:
@@ -50,54 +50,54 @@ def parse_ls_output(ls_output: str) -> List[Dict[str, any]]:
     """
     Parse ls -la output to extract file information
     Handles both directory listings and find+ls output
-    
+
     Args:
         ls_output: Output from ls -la command or find+ls command
-    
+
     Returns:
         List of dictionaries with file information
     """
     files = []
     lines = ls_output.strip().split('\n')
-    
+
     for line in lines:
         line = line.strip()
         if not line:
             continue
-            
+
         # Skip total line from ls -la
         if line.startswith('total '):
             continue
-            
+
         # Skip error messages
         if 'No such file or directory' in line or 'Permission denied' in line:
             continue
-            
+
         # Parse ls -la format: permissions links owner group size date time name
         # Example: -rw-r--r-- 1 root root 1234 Oct 8 12:34 filename.log
         parts = line.split()
-        
+
         if len(parts) < 9:  # Need at least 9 parts for a valid ls -la line
             continue
-            
+
         permissions = parts[0]
-        
+
         # Skip . and .. entries
         filename = ' '.join(parts[8:])  # Handle filenames with spaces
         if filename in ['.', '..']:
             continue
-            
+
         # Skip if it's a directory (we want actual files for size calculation)
         is_directory = permissions.startswith('d')
         if is_directory:
             continue
-            
+
         try:
             size_bytes = int(parts[4])
-            
+
             # Get modification time (parts 5, 6, 7)
             mod_time = ' '.join(parts[5:8])
-            
+
             files.append({
                 'name': filename,
                 'size_bytes': size_bytes,
@@ -109,7 +109,7 @@ def parse_ls_output(ls_output: str) -> List[Dict[str, any]]:
         except (ValueError, IndexError):
             # If we can't parse the line properly, skip it
             continue
-    
+
     return files
 
 
@@ -391,11 +391,12 @@ class RsyncManager:
             if process.returncode == 0:
                 # Parse the ls output to extract file information
                 files = parse_ls_output(stdout_str)
-                
+
                 # Calculate totals
-                total_size_bytes = sum(f['size_bytes'] for f in files if not f['is_directory'])
+                total_size_bytes = sum(f['size_bytes']
+                                       for f in files if not f['is_directory'])
                 file_count = len([f for f in files if not f['is_directory']])
-                
+
                 file_info = {
                     'files': files,
                     'total_size_bytes': total_size_bytes,
@@ -404,7 +405,7 @@ class RsyncManager:
                     'raw_output': stdout_str,  # Keep raw output for backward compatibility
                     'error': None
                 }
-                
+
                 return True, file_info
             else:
                 file_info = {
@@ -497,7 +498,7 @@ class RsyncManager:
             job = result['job']
             if job.hostname not in organized:
                 organized[job.hostname] = {}
-            
+
             file_info = result['file_info']
             organized[job.hostname][job.app_name] = {
                 'remote_path': job.remote_path,
@@ -506,7 +507,8 @@ class RsyncManager:
                 'total_size_bytes': file_info.get('total_size_bytes', 0),
                 'total_size_human': file_info.get('total_size_human', '0 B'),
                 'file_count': file_info.get('file_count', 0),
-                'output': file_info.get('raw_output', ''),  # Keep for backward compatibility
+                # Keep for backward compatibility
+                'output': file_info.get('raw_output', ''),
                 'error': file_info.get('error')
             }
 
@@ -580,6 +582,3 @@ if __name__ == "__main__":
 
         summary = manager.get_summary()
         print(f"Summary: {summary}")
-
-    # Run test
-    # asyncio.run(test())
