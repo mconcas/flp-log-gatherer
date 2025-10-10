@@ -29,35 +29,94 @@ applications:
     log_paths:
       - /var/log/consul
 
+  ccdb:
+    log_paths:
+      - /var/log/ccdb-memory*
+    journal: false # Use file-based logs only
+    journal_mode: binary # Optional: not used when journal: false
+
+  boot:
+    log_paths:
+      - /var/log/boot.log*
+    journal: false # Use file-based logs only
+    journal_mode: binary # Optional: not used when journal: false
+
+  o2-flp-setup:
+    log_paths:
+      - /var/log/o2-flp-setup/logs/deploy/
+    journal: false # Use file-based logs only
+    journal_mode: binary # Optional: not used when journal: false
+
   kafka:
     log_paths:
       - /var/log/kafka
+      - /var/log/kafka-ui*
+    journal: false # Use file-based logs only
+    journal_mode: binary # Optional: not used when journal: false
 
   apricot:
     log_paths:
-      - /var/log/o2-apricot.log
+      - /var/log/o2-apricot*
     journal: false # Use file-based logs only
     journal_mode: binary # Optional: not used when journal: false
 
   vault:
+
   bookkeeping:
   infologger:
+  opensearch:
+  opensearch-dashboards:
   nomad:
+    log_paths:
+      - /var/log/nomad/
+    journal: false # Use file-based logs only
+    journal_mode: binary # Optional: not used when journal: false
+
   telegraf:
+    log_paths:
+      - /var/log/telegraf/
+    journal: false # Use file-based logs only
+    journal_mode: binary # Optional: not used when journal: false
+
+  #Influxdb
   influxdb:
+    log_paths:
+      - /var/log/influxdb/
+    journal: false # Use file-based logs only
+    journal_mode: binary # Optional: not used when journal: false
+
   kibana:
   logstash:
-  qc:
+  qcg:
+    log_paths:
+      - /var/log/o2-qcg*
+    journal: false # Use file-based logs only
+    journal_mode: binary # Optional: not used when journal: false
+
   mesos:
-  ecs:
-  
+    log_paths:
+      - /var/log/mesos
+    journal: false # Use file-based logs only
+    journal_mode: binary # Optional: not used when journal: false
+
+  auditbeat:
+    log_paths:
+      - /var/log/auditbeat
+    journal: false # Use file-based logs only
+    journal_mode: binary # Optional: not used when journal: false
+
+  alice-ecs:
+
   #####################################################################################
-  # System logs
+  # System
   system:
-    # log_paths:
-    #   - /var/log/syslog*
     journal: true # Enable systemd journal collection
     journal_mode: binary # 'binary' (copy journal files) or 'export' (journalctl export)
+
+  # Audit
+  audit:
+    log_paths:
+      - /var/log/audit
 
 # Define which applications run on which node groups
 # Group names should match those in your Ansible inventory
@@ -68,9 +127,14 @@ node_groups:
   # Special: Applied to ALL nodes automatically
   _all_nodes:
     - system
+    - audit
+    - boot
+    - o2-flp-setup
 
   head:
     - apricot
+    - influxdb
+    - nomad
 
   elasticsearch:
     - elasticsearch

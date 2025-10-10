@@ -421,17 +421,18 @@ class LogCollector:
                 f"\033[1;32mOVERALL TOTAL: {total_files_all_hosts} files, {total_size_human}\033[0m")
             print("="*80)
 
-        # Generate per-application summary in Markdown format
-        self._print_application_summary_markdown(results)
+        # Generate per-application summary in Markdown format and save to file
+        self._save_application_summary_markdown(results)
 
-    def _print_application_summary_markdown(self, results: Dict) -> None:
+    def _save_application_summary_markdown(self, results: Dict) -> None:
         """
-        Print per-application summary in Markdown format for easy copy-pasting
+        Generate per-application summary in Markdown format and save to SUMMARY.md file
         
         Args:
             results: Exploration results from explore_remote_files()
         """
         from .rsync_manager import human_readable_size
+        from pathlib import Path
         
         # Aggregate data by application across all hosts
         app_summary = {}
@@ -458,17 +459,15 @@ class LogCollector:
         
         if not app_summary:
             return
-            
-        print("\n" + "="*80)
-        print("APPLICATION SUMMARY (Markdown Format)")
-        print("="*80)
-        print("\n```markdown")
-        print("# Log Collection Exploration Summary")
-        print()
-        print("## Per-Application Overview")
-        print()
-        print("| Application | Files Found | Total Size | Hosts with Files |")
-        print("|-------------|-------------|------------|------------------|")
+        
+        # Generate markdown content
+        markdown_content = []
+        markdown_content.append("# Log Collection Exploration Summary")
+        markdown_content.append("")
+        markdown_content.append("## Per-Application Overview")
+        markdown_content.append("")
+        markdown_content.append("| Application | Files Found | Total Size | Hosts with Files |")
+        markdown_content.append("|-------------|-------------|------------|------------------|")
         
         # Calculate overall totals
         grand_total_files = 0
@@ -487,15 +486,15 @@ class LogCollector:
             grand_total_files += files
             grand_total_size += summary['total_size_bytes']
             
-            print(f"| `{app_name}` | {files:,} | {size_human} | {host_count} |")
+            markdown_content.append(f"| `{app_name}` | {files:,} | {size_human} | {host_count} |")
         
         # Add totals row
         grand_total_human = human_readable_size(grand_total_size)
-        print(f"| **TOTAL** | **{grand_total_files:,}** | **{grand_total_human}** | **{len(results)}** |")
+        markdown_content.append(f"| **TOTAL** | **{grand_total_files:,}** | **{grand_total_human}** | **{len(results)}** |")
         
-        print()
-        print("## Detailed Breakdown")
-        print()
+        markdown_content.append("")
+        markdown_content.append("## Detailed Breakdown")
+        markdown_content.append("")
         
         for app_name, summary in sorted_apps:
             if summary['total_files'] > 0:
@@ -503,21 +502,26 @@ class LogCollector:
                 size_human = human_readable_size(summary['total_size_bytes'])
                 hosts = summary['hosts']
                 
-                print(f"### {app_name}")
-                print(f"- **Files:** {files:,}")
-                print(f"- **Total Size:** {size_human}")
-                print(f"- **Hosts:** {len(hosts)} host(s)")
+                markdown_content.append(f"### {app_name}")
+                markdown_content.append(f"- **Files:** {files:,}")
+                markdown_content.append(f"- **Total Size:** {size_human}")
+                markdown_content.append(f"- **Hosts:** {len(hosts)} host(s)")
                 if len(hosts) <= 10:  # Show host list if not too many
-                    print(f"- **Host List:** {', '.join(sorted(hosts))}")
+                    markdown_content.append(f"- **Host List:** {', '.join(sorted(hosts))}")
                 else:
-                    print(f"- **Host List:** {', '.join(sorted(hosts[:10]))} + {len(hosts)-10} more")
-                print()
+                    markdown_content.append(f"- **Host List:** {', '.join(sorted(hosts[:10]))} + {len(hosts)-10} more")
+                markdown_content.append("")
         
         from datetime import datetime
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        print(f"*Generated on {timestamp}*")
-        print("```")
-        print("="*80)
+        markdown_content.append(f"*Generated on {timestamp}*")
+        
+        # Write to SUMMARY.md file in current working directory
+        summary_file = Path("SUMMARY.md")
+        with open(summary_file, 'w') as f:
+            f.write('\n'.join(markdown_content))
+        
+        print(f"\nSummary written to: {summary_file.absolute()}")
 
     def print_summary(self) -> None:
         """Print summary of configured hosts and applications"""
