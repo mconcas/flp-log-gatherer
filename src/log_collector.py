@@ -203,7 +203,7 @@ class LogCollector:
 
         logger.info(
             f"Built {len(jobs)} rsync jobs"
-            f"and {len(journal_tasks)} journal export tasks"
+            f" and {len(journal_tasks)} journal export tasks"
         )
         self.jobs = jobs
         self.journal_tasks = journal_tasks

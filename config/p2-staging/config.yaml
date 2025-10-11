@@ -52,12 +52,13 @@ applications:
       - /var/log/btmp*
 
   # CCDB
-  ccdb:
+  ccdb-memory:
     log_paths:
       - /var/log/ccdb-memory*
     journal: false # Use file-based logs only
     journal_mode: binary # Optional: not used when journal: false
 
+  # COG
   cog:
     log_paths:
       - var/log/o2-cog*
@@ -85,6 +86,7 @@ applications:
     journal: false # Use file-based logs only
     journal_mode: binary # Optional: not used when journal: false
 
+  # Grafana
   grafana:
     log_paths:
       - /var/log/grafana
@@ -98,6 +100,7 @@ applications:
     journal: false # Use file-based logs only
     journal_mode: binary # Optional: not used when journal: false
 
+  # Infologger
   infologger:
     log_paths:
       - /var/log/o2-ilg*
@@ -114,20 +117,28 @@ applications:
     journal: false # Use file-based logs only
     journal_mode: binary # Optional: not used when journal: false
 
+  # Kibana
   kibana:
+    log_paths:
+      - /var/log/kibana
+    journal: false # Use file-based logs only
+    journal_mode: binary # Optional: not used when journal: false
 
+  # Logstash
   logstash:
     log_paths:
       - /var/log/logstash
     journal: false # Use file-based logs only
     journal_mode: binary # Optional: not used when journal: false
 
+  # MariaDB
   mariadb:
     log_paths:
       - /var/log/mariadb
     journal: false # Enable systemd journal collection
     journal_mode: binary # 'binary' (copy journal files) or 'export' (journalctl export)
 
+  # Mesos
   mesos:
     log_paths:
       - /var/log/mesos
@@ -141,6 +152,7 @@ applications:
     journal: false # Use file-based logs only
     journal_mode: binary # Optional: not used when journal: false
 
+  # Nomad
   nomad:
     log_paths:
       - /var/log/nomad/
@@ -154,28 +166,34 @@ applications:
     journal: false # Use file-based logs only
     journal_mode: binary # Optional: not used when journal: false
 
+  # OpenSearch
   opensearch:
 
+  # OpenSearch-Dashboards
   opensearch-dashboards:
 
+  # Private
   private:
     log_paths:
       - /var/log/private
     journal: false # Enable systemd journal collection
     journal_mode: binary # 'binary' (copy journal files) or 'export' (journalctl export)
 
+  # QCDB backup
   qcdb-backup:
     log_paths:
       - /var/log/qcdb-backup*
     journal: false # Use file-based logs only
     journal_mode: binary # Optional: not used when journal: false
 
+  # QCG
   qcg:
     log_paths:
       - /var/log/o2-qcg*
     journal: false # Use file-based logs only
     journal_mode: binary # Optional: not used when journal: false
 
+  # SSSD
   sssd:
     log_paths:
       - /var/log/sssd
@@ -187,18 +205,21 @@ applications:
     journal: true # Enable systemd journal collection
     journal_mode: binary # 'binary' (copy journal files) or 'export' (journalctl export)
 
+  # Telegraf
   telegraf:
     log_paths:
       - /var/log/telegraf/
     journal: false # Use file-based logs only
     journal_mode: binary # Optional: not used when journal: false
 
+  # Vault
   vault:
     log_paths:
       - /var/log/vault
     journal: false # Use file-based logs only
     journal_mode: binary # Optional: not used when journal: false
 
+  # XRootd
   xrootd:
     log_paths:
       - /var/log/xrootd
@@ -220,31 +241,60 @@ applications:
 node_groups:
   # Special: Applied to ALL nodes automatically
   _all_nodes:
-    - system
     - audit
-    - boot
     - cron
+    - system
+    - telegraf
+
+  bookkeepingdb:
+    - bookkeeping
+    - telegraf
+    - consul
+
+  bookkeeping-lhc:
+    - bookkeeping
+    - telegraf
+    - consul
+
+  consul-ui:
+    - consul
+
+  elasticsearch:
+    - elasticsearch
+    - consul
     - telegraf
 
   head:
     - apricot
+    - bookkeeping
+    - cog
+    - consul
+    - elasticsearch
+    - grafana
     - influxdb
+    - infologger
+    - kafka
+    - kibana
+    - logstash
+    - mesos
+    - nginx
     - nomad
     - o2-flp-setup
+    - qcg
+    - telegraf
+    - vault
 
-  elasticsearch:
-    - elasticsearch
+  flps:
+    - consul
+    - mesos
+    - telegraf
+    - infologger
+    - ccdb-memory
 
   index-page:
     - nginx
 
-  zookeepers:
-    - zookeeper
-
   kafka-aliecs:
-    - kafka
-
-  notification:
     - kafka
 
   kafka-metric-processing:
@@ -253,19 +303,64 @@ node_groups:
   kafka-rest:
     - kafka
 
-  consul-ui:
+  notification:
+    - kafka
+
+  zookeepers:
+    - zookeeper
+
+  qcdb:
+    - telegraf
     - consul
 
-  bookkeeping-lhc:
-    - bookkeeping
+  nomad:
+    - nomad
+    - telegraf
+    - consul
 
+  vault:
+    - vault
+
+  gateways:
+    - telegraf
+
+  logstash:
+    - logstash
+    - consul
+    - telegraf
+
+  kibana:
+    - kibana
+    - consul
+    - telegraf
+
+  kafka-brokers:
+    - kafka
+    - telegraf
+    - consul
+    - nomad
+
+  calib-dcs:
+    - infologger
+    - consul
+    - telegraf
+  
   qc:
-    -
+    - infologger
+    - consul
+    - telegraf
+    - ccdb-memory
+  
   qcpp:
+    - consul
+    - telegraf
+    - ccdb-memory
+    - nomad
+
 # Rsync and collection options
 rsync_options:
   # Maximum number of parallel rsync jobs
-  max_parallel_jobs: 5
+  max_parallel_jobs: 20
 
   # Enable post-sync compression of collected logs (creates tar.gz archives)
   # Set to false to keep logs uncompressed (default, saves CPU and allows immediate access)
@@ -354,3 +449,10 @@ journal_options:
 
     # Maximum lines to collect per journal query (safety limit)
     max_lines: null
+
+# To be sorted?
+# - { role: control-core, tags: [control-core, control] }
+# - { role: control-gui, tags: [control-gui, control, guis], when: 'groups["cog"] is not defined' }
+# - { role: control-consul, tags: [control-consul, control] }
+# - { role: o2-software, tags: [control-core, control] }
+# - { role: quality-control, tags: [quality-control, qc] }
