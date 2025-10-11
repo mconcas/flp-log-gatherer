@@ -4,17 +4,77 @@
 # Define applications and their log file paths
 
 applications:
-  # Nginx
-  nginx:
+  # alice-ecs
+  alice-ecs:
     log_paths:
-      - /var/log/nginx
+      - /var/log/o2-aliecs-core*
     journal: false # Use file-based logs only
     journal_mode: binary # Optional: not used when journal: false
 
-  # Zookeper
-  zookeeper:
+  # Apricot
+  apricot:
     log_paths:
-      - /var/log/zookeeper/
+      - /var/log/o2-apricot*
+    journal: false # Use file-based logs only
+    journal_mode: binary # Optional: not used when journal: false
+
+  # Audit
+  audit:
+    log_paths:
+      - /var/log/audit
+    journal: false # Enable systemd journal collection
+    journal_mode: binary # 'binary' (copy journal files) or 'export' (journalctl export)
+
+  # Auditbeat
+  auditbeat:
+    log_paths:
+      - /var/log/auditbeat
+    journal: false # Use file-based logs only
+    journal_mode: binary # Optional: not used when journal: false
+
+  # Bookkeeping
+  bookkeeping:
+    log_paths:
+      - /var/log/o2-bkp*
+    journal: false # Use file-based logs only
+    journal_mode: binary # Optional: not used when journal: false
+
+  # Boot logs
+  boot:
+    log_paths:
+      - /var/log/boot.log*
+    journal: false # Use file-based logs only
+    journal_mode: binary # Optional: not used when journal: false
+
+  # Failed logins log
+  btmp:
+    log_paths:
+      - /var/log/btmp*
+
+  # CCDB
+  ccdb:
+    log_paths:
+      - /var/log/ccdb-memory*
+    journal: false # Use file-based logs only
+    journal_mode: binary # Optional: not used when journal: false
+
+  cog:
+    log_paths:
+      - var/log/o2-cog*
+    journal: false # Use file-based logs only
+    journal_mode: binary # Optional: not used when journal: false
+
+  # Consul
+  consul:
+    log_paths:
+      - /var/log/consul
+    journal: false # Use file-based logs only
+    journal_mode: binary # Optional: not used when journal: false
+
+  # Cron jobs
+  cron:
+    log_paths:
+      - /var/log/cron*
     journal: false # Use file-based logs only
     journal_mode: binary # Optional: not used when journal: false
 
@@ -25,73 +85,48 @@ applications:
     journal: false # Use file-based logs only
     journal_mode: binary # Optional: not used when journal: false
 
-  consul:
+  grafana:
     log_paths:
-      - /var/log/consul
-
-  ccdb:
-    log_paths:
-      - /var/log/ccdb-memory*
+      - /var/log/grafana
     journal: false # Use file-based logs only
     journal_mode: binary # Optional: not used when journal: false
 
-  boot:
+  # Influxdb
+  influxdb:
     log_paths:
-      - /var/log/boot.log*
+      - /var/log/influxdb
     journal: false # Use file-based logs only
     journal_mode: binary # Optional: not used when journal: false
 
-  o2-flp-setup:
+  infologger:
     log_paths:
-      - /var/log/o2-flp-setup/logs/deploy/
+      - /var/log/o2-ilg*
+      - /var/log/o2-infologger-daemon.log*
     journal: false # Use file-based logs only
     journal_mode: binary # Optional: not used when journal: false
 
+  # Kafka
   kafka:
     log_paths:
       - /var/log/kafka
       - /var/log/kafka-ui*
-    journal: false # Use file-based logs only
-    journal_mode: binary # Optional: not used when journal: false
-
-  apricot:
-    log_paths:
-      - /var/log/o2-apricot*
-    journal: false # Use file-based logs only
-    journal_mode: binary # Optional: not used when journal: false
-
-  vault:
-
-  bookkeeping:
-  infologger:
-  opensearch:
-  opensearch-dashboards:
-  nomad:
-    log_paths:
-      - /var/log/nomad/
-    journal: false # Use file-based logs only
-    journal_mode: binary # Optional: not used when journal: false
-
-  telegraf:
-    log_paths:
-      - /var/log/telegraf/
-    journal: false # Use file-based logs only
-    journal_mode: binary # Optional: not used when journal: false
-
-  #Influxdb
-  influxdb:
-    log_paths:
-      - /var/log/influxdb/
+      - /var/log/confluent
     journal: false # Use file-based logs only
     journal_mode: binary # Optional: not used when journal: false
 
   kibana:
+
   logstash:
-  qcg:
     log_paths:
-      - /var/log/o2-qcg*
+      - /var/log/logstash
     journal: false # Use file-based logs only
     journal_mode: binary # Optional: not used when journal: false
+
+  mariadb:
+    log_paths:
+      - /var/log/mariadb
+    journal: false # Enable systemd journal collection
+    journal_mode: binary # 'binary' (copy journal files) or 'export' (journalctl export)
 
   mesos:
     log_paths:
@@ -99,24 +134,83 @@ applications:
     journal: false # Use file-based logs only
     journal_mode: binary # Optional: not used when journal: false
 
-  auditbeat:
+  # Nginx
+  nginx:
     log_paths:
-      - /var/log/auditbeat
+      - /var/log/nginx
     journal: false # Use file-based logs only
     journal_mode: binary # Optional: not used when journal: false
 
-  alice-ecs:
+  nomad:
+    log_paths:
+      - /var/log/nomad/
+    journal: false # Use file-based logs only
+    journal_mode: binary # Optional: not used when journal: false
 
-  #####################################################################################
+  # o2-flp-setup deployments
+  o2-flp-setup:
+    log_paths:
+      - /var/log/o2-flp-setup/logs/deploy/
+    journal: false # Use file-based logs only
+    journal_mode: binary # Optional: not used when journal: false
+
+  opensearch:
+
+  opensearch-dashboards:
+
+  private:
+    log_paths:
+      - /var/log/private
+    journal: false # Enable systemd journal collection
+    journal_mode: binary # 'binary' (copy journal files) or 'export' (journalctl export)
+
+  qcdb-backup:
+    log_paths:
+      - /var/log/qcdb-backup*
+    journal: false # Use file-based logs only
+    journal_mode: binary # Optional: not used when journal: false
+
+  qcg:
+    log_paths:
+      - /var/log/o2-qcg*
+    journal: false # Use file-based logs only
+    journal_mode: binary # Optional: not used when journal: false
+
+  sssd:
+    log_paths:
+      - /var/log/sssd
+    journal: false # Enable systemd journal collection
+    journal_mode: binary # 'binary' (copy journal files) or 'export' (journalctl export)
+
   # System
   system:
     journal: true # Enable systemd journal collection
     journal_mode: binary # 'binary' (copy journal files) or 'export' (journalctl export)
 
-  # Audit
-  audit:
+  telegraf:
     log_paths:
-      - /var/log/audit
+      - /var/log/telegraf/
+    journal: false # Use file-based logs only
+    journal_mode: binary # Optional: not used when journal: false
+
+  vault:
+    log_paths:
+      - /var/log/vault
+    journal: false # Use file-based logs only
+    journal_mode: binary # Optional: not used when journal: false
+
+  xrootd:
+    log_paths:
+      - /var/log/xrootd
+    journal: false # Enable systemd journal collection
+    journal_mode: binary # 'binary' (copy journal files) or 'export' (journalctl export)
+
+  # Zookeeper
+  zookeeper:
+    log_paths:
+      - /var/log/zookeeper/
+    journal: false # Use file-based logs only
+    journal_mode: binary # Optional: not used when journal: false
 
 # Define which applications run on which node groups
 # Group names should match those in your Ansible inventory
@@ -129,12 +223,14 @@ node_groups:
     - system
     - audit
     - boot
-    - o2-flp-setup
+    - cron
+    - telegraf
 
   head:
     - apricot
     - influxdb
     - nomad
+    - o2-flp-setup
 
   elasticsearch:
     - elasticsearch
@@ -160,6 +256,12 @@ node_groups:
   consul-ui:
     - consul
 
+  bookkeeping-lhc:
+    - bookkeeping
+
+  qc:
+    -
+  qcpp:
 # Rsync and collection options
 rsync_options:
   # Maximum number of parallel rsync jobs
