@@ -189,6 +189,17 @@ class ConfigManager:
         node_path = self.get_node_storage_path(hostname)
         return node_path / app_name
 
+    def get_failure_log_path(self) -> Path:
+        """
+        Get the path for rsync failure logs (always in the data directory)
+
+        Returns:
+            Path object for failure log file
+        """
+        # Always place failure logs in the same directory as collected data
+        log_dir = self.get_local_storage_path()
+        return log_dir / "failures.log"
+
     def should_filter_by_date(self) -> bool:
         """
         Check if date filtering is enabled

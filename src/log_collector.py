@@ -240,7 +240,8 @@ class LogCollector:
 
             if rsync_summary['failed'] > 0:
                 logger.warning(f"{rsync_summary['failed']} rsync jobs failed")
-                self.rsync_manager.write_failure_log()
+                failure_log_path = self.config.get_failure_log_path()
+                self.rsync_manager.write_failure_log(failure_log_path)
 
         # Execute journal collection tasks
         journal_summary = {'total': 0, 'successful': 0, 'failed': 0}
@@ -382,8 +383,13 @@ class LogCollector:
                 else:
                     error = app_info.get('error') or app_info.get(
                         'output', '').strip()
-                    if error:
-                        # Filter out SSH warnings/noise
+                    is_ssh_error = app_info.get('ssh_error', False)
+                    
+                    if is_ssh_error:
+                        # Highlight SSH connection errors differently
+                        print(f"    \033[91mSSH Connection Error:\033[0m {error}")
+                    elif error:
+                        # Filter out SSH warnings/noise for legitimate "file not found"
                         error_lines = []
                         for line in error.split('\n'):
                             line = line.strip()
@@ -419,10 +425,23 @@ class LogCollector:
             print("="*80)
             print(
                 f"\033[1;32mOVERALL TOTAL: {total_files_all_hosts} files, {total_size_human}\033[0m")
-            print("="*80)
-
-        # Generate per-application summary in Markdown format and save to file
-        self._save_application_summary_markdown(results)
+        
+        # Show SSH connection summary
+        total_apps = 0
+        ssh_errors = 0
+        for hostname, apps in results.items():
+            for app_name, app_info in apps.items():
+                total_apps += 1
+                if app_info.get('ssh_error', False):
+                    ssh_errors += 1
+        
+        successful_connections = total_apps - ssh_errors
+        print(f"\033[1;34mSSH CONNECTIONS: {successful_connections}/{total_apps} successful\033[0m")
+        
+        if ssh_errors > 0:
+            print(f"\033[1;33mSSH FAILURES: {ssh_errors} connection(s) failed - check logs for details\033[0m")
+        
+        print("="*80)
 
     def _save_application_summary_markdown(self, results: Dict) -> None:
         """

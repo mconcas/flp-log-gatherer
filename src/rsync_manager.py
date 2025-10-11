@@ -333,6 +333,7 @@ class RsyncManager:
     async def check_remote_file_exists(self, job: RsyncJob) -> Tuple[bool, Dict]:
         """
         Check if remote files exist and get their information (explore mode)
+        Includes retry logic for transient SSH failures
 
         Args:
             job: RsyncJob to check
@@ -345,6 +346,78 @@ class RsyncManager:
             - 'total_size_human': Human-readable total size
             - 'file_count': Number of files found
             - 'error': Error message if any
+            - 'ssh_error': True if this was an SSH connection error vs file not found
+        """
+        for attempt in range(1, self.retry_count + 1):
+            try:
+                exists, file_info = await self._check_remote_file_exists_single(job, attempt)
+                return exists, file_info
+            except (asyncio.TimeoutError, OSError, ConnectionError) as e:
+                # Log SSH connection failures
+                logger.warning(
+                    f"[{job.hostname}/{job.app_name}] SSH connection failed "
+                    f"(attempt {attempt}/{self.retry_count}): {str(e)}"
+                )
+                
+                if attempt < self.retry_count:
+                    logger.info(
+                        f"[{job.hostname}/{job.app_name}] Retrying SSH connection in {self.retry_delay}s..."
+                    )
+                    await asyncio.sleep(self.retry_delay)
+                    continue
+                else:
+                    # All retries failed - this is an SSH connection error
+                    logger.error(
+                        f"[{job.hostname}/{job.app_name}] SSH connection failed after {self.retry_count} attempts: {str(e)}"
+                    )
+                    file_info = {
+                        'files': [],
+                        'total_size_bytes': 0,
+                        'total_size_human': '0 B',
+                        'file_count': 0,
+                        'raw_output': '',
+                        'error': f"SSH connection failed after {self.retry_count} attempts: {str(e)}",
+                        'ssh_error': True
+                    }
+                    return False, file_info
+            except Exception as e:
+                # Unexpected error
+                logger.error(
+                    f"[{job.hostname}/{job.app_name}] Unexpected error during SSH check: {str(e)}"
+                )
+                file_info = {
+                    'files': [],
+                    'total_size_bytes': 0,
+                    'total_size_human': '0 B',
+                    'file_count': 0,
+                    'raw_output': '',
+                    'error': f"Unexpected error: {str(e)}",
+                    'ssh_error': True
+                }
+                return False, file_info
+
+        # Should not reach here
+        file_info = {
+            'files': [],
+            'total_size_bytes': 0,
+            'total_size_human': '0 B',
+            'file_count': 0,
+            'raw_output': '',
+            'error': "Max retries exceeded",
+            'ssh_error': True
+        }
+        return False, file_info
+
+    async def _check_remote_file_exists_single(self, job: RsyncJob, attempt: int) -> Tuple[bool, Dict]:
+        """
+        Single attempt to check if remote files exist
+        
+        Args:
+            job: RsyncJob to check
+            attempt: Current attempt number (for logging)
+            
+        Returns:
+            Tuple of (exists, file_info_dict)
         """
         ssh_target = f"{job.ssh_user}@{job.hostname}"
 
@@ -370,72 +443,73 @@ class RsyncManager:
             find_cmd
         ])
 
-        try:
+        logger.debug(
+            f"[{job.hostname}/{job.app_name}] Checking remote path: {job.remote_path} (attempt {attempt})"
+        )
+
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+
+        stdout, stderr = await asyncio.wait_for(
+            process.communicate(),
+            timeout=self.timeout
+        )
+
+        stdout_str = stdout.decode('utf-8', errors='replace')
+        stderr_str = stderr.decode('utf-8', errors='replace')
+
+        if process.returncode == 0:
+            # Parse the ls output to extract file information
+            files = parse_ls_output(stdout_str)
+
+            # Calculate totals
+            total_size_bytes = sum(f['size_bytes']
+                                   for f in files if not f['is_directory'])
+            file_count = len([f for f in files if not f['is_directory']])
+
             logger.debug(
-                f"[{job.hostname}/{job.app_name}] Checking remote path: {job.remote_path}")
-
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                f"[{job.hostname}/{job.app_name}] Found {file_count} files, {human_readable_size(total_size_bytes)}"
             )
 
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(),
-                timeout=30
-            )
-
-            stdout_str = stdout.decode('utf-8', errors='replace')
-            stderr_str = stderr.decode('utf-8', errors='replace')
-
-            if process.returncode == 0:
-                # Parse the ls output to extract file information
-                files = parse_ls_output(stdout_str)
-
-                # Calculate totals
-                total_size_bytes = sum(f['size_bytes']
-                                       for f in files if not f['is_directory'])
-                file_count = len([f for f in files if not f['is_directory']])
-
-                file_info = {
-                    'files': files,
-                    'total_size_bytes': total_size_bytes,
-                    'total_size_human': human_readable_size(total_size_bytes),
-                    'file_count': file_count,
-                    'raw_output': stdout_str,  # Keep raw output for backward compatibility
-                    'error': None
-                }
-
-                return True, file_info
-            else:
-                file_info = {
-                    'files': [],
-                    'total_size_bytes': 0,
-                    'total_size_human': '0 B',
-                    'file_count': 0,
-                    'raw_output': stderr_str,
-                    'error': stderr_str
-                }
-                return False, file_info
-
-        except asyncio.TimeoutError:
             file_info = {
-                'files': [],
-                'total_size_bytes': 0,
-                'total_size_human': '0 B',
-                'file_count': 0,
-                'raw_output': '',
-                'error': "Timeout while checking remote files"
+                'files': files,
+                'total_size_bytes': total_size_bytes,
+                'total_size_human': human_readable_size(total_size_bytes),
+                'file_count': file_count,
+                'raw_output': stdout_str,
+                'error': None,
+                'ssh_error': False
             }
-            return False, file_info
-        except Exception as e:
+
+            return True, file_info
+        else:
+            # Check if this looks like an SSH connection error vs file not found
+            is_ssh_error = any(indicator in stderr_str.lower() for indicator in [
+                'connection refused', 'connection timed out', 'host key verification failed',
+                'permission denied', 'no route to host', 'connection reset',
+                'ssh: could not resolve hostname', 'operation timed out'
+            ])
+            
+            if is_ssh_error:
+                # This is an SSH connection issue, not a file not found issue
+                raise ConnectionError(f"SSH connection issue: {stderr_str.strip()}")
+            
+            # This appears to be a legitimate "file not found" case
+            logger.debug(
+                f"[{job.hostname}/{job.app_name}] Path not found or no files: {job.remote_path}"
+            )
+            
             file_info = {
                 'files': [],
                 'total_size_bytes': 0,
                 'total_size_human': '0 B',
                 'file_count': 0,
-                'raw_output': '',
-                'error': str(e)
+                'raw_output': stderr_str,
+                'error': stderr_str,
+                'ssh_error': False
             }
             return False, file_info
 
@@ -479,10 +553,21 @@ class RsyncManager:
         logger.info(f"Exploring {len(jobs)} remote locations")
 
         semaphore = asyncio.Semaphore(self.max_parallel_jobs)
+        ssh_failures = []  # Track SSH connection failures
 
         async def bounded_explore(job: RsyncJob):
             async with semaphore:
                 exists, file_info = await self.check_remote_file_exists(job)
+                
+                # Track SSH failures for summary
+                if not exists and file_info.get('ssh_error', False):
+                    ssh_failures.append({
+                        'hostname': job.hostname,
+                        'app_name': job.app_name,
+                        'remote_path': job.remote_path,
+                        'error': file_info.get('error', 'Unknown SSH error')
+                    })
+                
                 return {
                     'job': job,
                     'exists': exists,
@@ -509,8 +594,22 @@ class RsyncManager:
                 'file_count': file_info.get('file_count', 0),
                 # Keep for backward compatibility
                 'output': file_info.get('raw_output', ''),
-                'error': file_info.get('error')
+                'error': file_info.get('error'),
+                'ssh_error': file_info.get('ssh_error', False)
             }
+
+        # Log SSH failure summary
+        if ssh_failures:
+            logger.warning(f"SSH connection failures occurred during exploration:")
+            for failure in ssh_failures:
+                logger.warning(
+                    f"  {failure['hostname']}/{failure['app_name']}: {failure['error']}"
+                )
+            logger.warning(
+                f"Total SSH failures: {len(ssh_failures)}/{len(jobs)} connections"
+            )
+        else:
+            logger.info("All SSH connections successful")
 
         return organized
 

@@ -360,7 +360,7 @@ node_groups:
 # Rsync and collection options
 rsync_options:
   # Maximum number of parallel rsync jobs
-  max_parallel_jobs: 20
+  max_parallel_jobs: 5
 
   # Enable post-sync compression of collected logs (creates tar.gz archives)
   # Set to false to keep logs uncompressed (default, saves CPU and allows immediate access)
