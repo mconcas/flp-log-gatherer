@@ -115,19 +115,19 @@ def parse_ls_output(ls_output: str) -> List[Dict[str, any]]:
 
 @dataclass
 class RsyncJob:
-    """Represents a single rsync job"""
+    """Represents a single rsync operation"""
     hostname: str
     app_name: str
     remote_path: str
     local_path: Path
+    flags: List[str]
     ssh_user: str = "root"
     ssh_port: int = 22
     ssh_ignore_host_key: bool = True
-    flags: List[str] = None
-
-    def __post_init__(self):
-        if self.flags is None:
-            self.flags = ['-a', '--progress']
+    # Gateway/proxy configuration
+    gateway_host: Optional[str] = None
+    gateway_user: Optional[str] = None
+    gateway_port: int = 22
 
 
 @dataclass
@@ -197,6 +197,13 @@ class RsyncManager:
         ssh_opts = f"ssh -p {job.ssh_port}"
         if job.ssh_ignore_host_key:
             ssh_opts += " -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+        
+        # Add gateway/proxy jump host configuration if specified
+        if job.gateway_host:
+            gateway_user = job.gateway_user or job.ssh_user
+            ssh_opts += f" -o ProxyJump={gateway_user}@{job.gateway_host}:{job.gateway_port}"
+            logger.debug(f"[{job.hostname}/{job.app_name}] Using gateway: {gateway_user}@{job.gateway_host}:{job.gateway_port}")
+        
         cmd.extend(['-e', ssh_opts])
 
         # Add source and destination
@@ -434,6 +441,14 @@ class RsyncManager:
                 '-o', 'UserKnownHostsFile=/dev/null',
                 '-o', 'LogLevel=ERROR'  # Suppress SSH warnings
             ])
+
+        # Add gateway/proxy jump host configuration if specified
+        if job.gateway_host:
+            gateway_user = job.gateway_user or job.ssh_user
+            cmd.extend([
+                '-o', f'ProxyJump={gateway_user}@{job.gateway_host}:{job.gateway_port}'
+            ])
+            logger.debug(f"[{job.hostname}/{job.app_name}] Using gateway for explore: {gateway_user}@{job.gateway_host}:{job.gateway_port}")
 
         # Use find command to recursively get all files with sizes
         # This handles directories that contain subdirectories with actual files

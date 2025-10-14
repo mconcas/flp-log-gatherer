@@ -183,14 +183,24 @@ async def run_probe(args):
         # Create probe manager
         probe_manager = ProbeManager(
             ssh_user=ssh_user,
-            strict_host_key_checking=strict_host_key
+            strict_host_key_checking=strict_host_key,
+            gateway_host=config.get_gateway_host(),
+            gateway_user=config.get_gateway_user() if config.is_gateway_enabled() else None,
+            gateway_port=config.get_gateway_port()
         )
 
         # Probe all hosts
         results = await probe_manager.probe_hosts(hosts)
 
         # Print results
-        probe_manager.print_probe_results(results)
+        gateway_info = None
+        if config.is_gateway_enabled():
+            gateway_info = {
+                'host': config.get_gateway_host(),
+                'user': config.get_gateway_user(),
+                'port': config.get_gateway_port()
+            }
+        probe_manager.print_probe_results(results, gateway_info)
 
         # Return success if all hosts are reachable
         all_ok = all(r['ping_success'] and r['ssh_success'] for r in results)

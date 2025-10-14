@@ -141,6 +141,9 @@ class LogCollector:
                                 'ssh_port', 22),
                             ssh_ignore_host_key=self.config.get_rsync_option(
                                 'ssh_ignore_host_key', True),
+                            gateway_host=self.config.get_gateway_host(),
+                            gateway_user=self.config.get_gateway_user() if self.config.is_gateway_enabled() else None,
+                            gateway_port=self.config.get_gateway_port(),
                             flags=self.config.get_rsync_base_flags()
                         )
 
@@ -182,6 +185,9 @@ class LogCollector:
                                     'ssh_port', 22),
                                 ssh_ignore_host_key=self.config.get_rsync_option(
                                     'ssh_ignore_host_key', True),
+                                gateway_host=self.config.get_gateway_host(),
+                                gateway_user=self.config.get_gateway_user() if self.config.is_gateway_enabled() else None,
+                                gateway_port=self.config.get_gateway_port(),
                                 flags=self.config.get_rsync_base_flags()
                             )
                             jobs.append(job)

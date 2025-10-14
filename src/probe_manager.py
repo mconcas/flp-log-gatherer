@@ -20,16 +20,23 @@ logger = logging.getLogger(__name__)
 class ProbeManager:
     """Manages probing of remote hosts for connectivity and SSH access."""
 
-    def __init__(self, ssh_user: str = None, strict_host_key_checking: bool = True):
+    def __init__(self, ssh_user: str = None, strict_host_key_checking: bool = True, 
+                 gateway_host: str = None, gateway_user: str = None, gateway_port: int = 22):
         """
         Initialize the probe manager.
 
         Args:
             ssh_user: SSH username for connections (None uses default)
             strict_host_key_checking: Whether to enforce strict host key checking
+            gateway_host: SSH gateway/jump host (None disables gateway)
+            gateway_user: SSH username for gateway (None uses ssh_user)
+            gateway_port: SSH port for gateway connection
         """
         self.ssh_user = ssh_user
         self.strict_host_key_checking = strict_host_key_checking
+        self.gateway_host = gateway_host
+        self.gateway_user = gateway_user or ssh_user
+        self.gateway_port = gateway_port
 
     async def probe_host(self, hostname: str) -> Dict[str, any]:
         """
@@ -101,6 +108,30 @@ class ProbeManager:
         """
         Test ICMP ping connectivity.
 
+        If gateway is configured, ping will be executed through the gateway.
+        Otherwise, ping is executed locally.
+
+        Args:
+            hostname: The hostname to ping
+
+        Returns:
+            Tuple of (success: bool, avg_time_ms: float or None)
+        """
+        try:
+            if self.gateway_host:
+                # Ping through gateway using SSH
+                return await self._test_ping_through_gateway(hostname)
+            else:
+                # Direct ping
+                return await self._test_ping_direct(hostname)
+        except Exception as e:
+            logger.debug(f"[{hostname}] Ping test failed: {e}")
+            return False, None
+
+    async def _test_ping_direct(self, hostname: str) -> Tuple[bool, float]:
+        """
+        Test direct ICMP ping connectivity.
+
         Sends 1 initial ping. If it fails, returns immediately.
         If it succeeds, sends up to 4 more pings with 1s interval.
 
@@ -112,7 +143,7 @@ class ProbeManager:
         """
         try:
             # First ping - quick fail if host is unreachable
-            logger.debug(f"[{hostname}] Testing initial ping...")
+            logger.debug(f"[{hostname}] Testing initial direct ping...")
             cmd = ['ping', '-c', '1', '-W', '2', hostname]
 
             proc = await asyncio.create_subprocess_exec(
@@ -152,18 +183,97 @@ class ProbeManager:
                             times = parts[1].strip().split()[0]
                             avg_time = float(times.split('/')[1])
                             logger.debug(
-                                f"[{hostname}] Ping successful: {avg_time:.2f}ms")
+                                f"[{hostname}] Direct ping successful: {avg_time:.2f}ms")
                             return True, avg_time
 
                 # If we can't parse the time, still return success
-                logger.debug(f"[{hostname}] Ping successful (time not parsed)")
+                logger.debug(f"[{hostname}] Direct ping successful (time not parsed)")
                 return True, None
             else:
-                logger.warning(f"[{hostname}] Ping failed")
+                logger.debug(f"[{hostname}] Direct ping failed")
                 return False, None
 
         except Exception as e:
-            logger.error(f"[{hostname}] Ping error: {e}")
+            logger.debug(f"[{hostname}] Direct ping test failed: {e}")
+            return False, None
+
+    async def _test_ping_through_gateway(self, hostname: str) -> Tuple[bool, float]:
+        """
+        Test ping connectivity through SSH gateway.
+
+        Executes ping command on the gateway server to test connectivity to target host.
+
+        Args:
+            hostname: The hostname to ping from the gateway
+
+        Returns:
+            Tuple of (success: bool, avg_time_ms: float or None)
+        """
+        try:
+            logger.debug(f"[{hostname}] Testing ping through gateway {self.gateway_host}...")
+
+            # Build SSH command to execute ping on gateway
+            ssh_cmd = ['ssh']
+
+            # Add SSH options
+            ssh_cmd.extend([
+                '-o', 'ConnectTimeout=10',
+                '-o', 'BatchMode=yes',
+                '-o', 'LogLevel=ERROR'
+            ])
+
+            if not self.strict_host_key_checking:
+                ssh_cmd.extend([
+                    '-o', 'StrictHostKeyChecking=no',
+                    '-o', 'UserKnownHostsFile=/dev/null'
+                ])
+
+            # Add gateway connection details
+            if self.gateway_user:
+                ssh_cmd.extend(['-l', self.gateway_user])
+            ssh_cmd.extend(['-p', str(self.gateway_port)])
+            ssh_cmd.append(self.gateway_host)
+
+            # Ping command to execute on gateway
+            ping_cmd = f"ping -c 4 -i 1 -W 2 {hostname}"
+            ssh_cmd.append(ping_cmd)
+
+            proc = await asyncio.create_subprocess_exec(
+                *ssh_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+
+            stdout, stderr = await proc.communicate()
+
+            if proc.returncode == 0:
+                # Parse average time from output
+                output = stdout.decode()
+                for line in output.split('\n'):
+                    if 'rtt min/avg/max/mdev' in line or 'round-trip' in line:
+                        # Format: rtt min/avg/max/mdev = 0.123/0.456/0.789/0.012 ms
+                        parts = line.split('=')
+                        if len(parts) > 1:
+                            times = parts[1].strip().split()[0]
+                            avg_time = float(times.split('/')[1])
+                            logger.debug(
+                                f"[{hostname}] Gateway ping successful: {avg_time:.2f}ms")
+                            return True, avg_time
+
+                # If we can't parse the time, still return success
+                logger.debug(f"[{hostname}] Gateway ping successful (time not parsed)")
+                return True, None
+            else:
+                # Check if it's a gateway connection issue vs target unreachable
+                stderr_output = stderr.decode()
+                if any(keyword in stderr_output.lower() for keyword in ['connection refused', 'connection timed out', 'host unreachable']):
+                    logger.debug(f"[{hostname}] Gateway connection failed: {stderr_output}")
+                else:
+                    logger.debug(f"[{hostname}] Ping through gateway failed (target unreachable)")
+                return False, None
+
+        except Exception as e:
+            logger.debug(f"[{hostname}] Gateway ping test failed: {e}")
             return False, None
 
     async def _test_ssh(self, hostname: str) -> Tuple[bool, str]:
@@ -201,6 +311,13 @@ class ProbeManager:
                     '-o', 'UserKnownHostsFile=/dev/null'
                 ])
 
+            # Add gateway/proxy jump configuration if specified
+            if self.gateway_host:
+                cmd.extend([
+                    '-o', f'ProxyJump={self.gateway_user}@{self.gateway_host}:{self.gateway_port}'
+                ])
+                logger.debug(f"[{hostname}] Using gateway: {self.gateway_user}@{self.gateway_host}:{self.gateway_port}")
+
             # Add hostname and simple command
             cmd.extend([hostname, 'echo', 'SSH_OK'])
 
@@ -228,15 +345,18 @@ class ProbeManager:
             return False, str(e)
 
     @staticmethod
-    def print_probe_results(results: List[Dict[str, any]]):
+    def print_probe_results(results: List[Dict[str, any]], gateway_info: Dict[str, str] = None):
         """
         Print probe results in a compact table format.
 
         Args:
             results: List of probe result dictionaries
+            gateway_info: Optional gateway configuration info to display
         """
         print("\n" + "=" * 100)
         print("PROBE RESULTS")
+        if gateway_info:
+            print(f"Gateway: {gateway_info['user']}@{gateway_info['host']}:{gateway_info['port']}")
         print("=" * 100)
 
         # Calculate column widths

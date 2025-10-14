@@ -49,6 +49,10 @@ class ConfigManager:
             'ssh_user': 'root',
             'ssh_port': 22,
             'ssh_ignore_host_key': True,  # Ignore host key verification by default
+            # Gateway/proxy configuration
+            'gateway_host': None,  # SSH gateway/jump host (e.g., 'gateway.example.com')
+            'gateway_user': None,  # SSH user for gateway (defaults to ssh_user if not set)
+            'gateway_port': 22,    # SSH port for gateway
             # Disable rsync compression by default (reduces remote CPU load)
             'use_compression': False,
             'additional_flags': ['-a', '--progress'],
@@ -72,7 +76,9 @@ class ConfigManager:
         Returns:
             List of application names
         """
-        return self.node_groups.get(group_name, [])
+        apps = self.node_groups.get(group_name, [])
+        # Handle case where apps is None (empty YAML entry)
+        return apps if apps is not None else []
 
     def get_log_paths_for_application(self, app_name: str) -> List[str]:
         """
@@ -231,6 +237,45 @@ class ConfigManager:
         user = self.rsync_options.get('ssh_user', 'root')
         return f"{user}@{hostname}"
 
+    def get_gateway_host(self) -> Optional[str]:
+        """
+        Get gateway host configuration
+
+        Returns:
+            Gateway hostname or None if not configured
+        """
+        return self.rsync_options.get('gateway_host')
+
+    def get_gateway_user(self) -> str:
+        """
+        Get gateway user (defaults to ssh_user if not specified)
+
+        Returns:
+            Gateway username
+        """
+        gateway_user = self.rsync_options.get('gateway_user')
+        if gateway_user:
+            return gateway_user
+        return self.rsync_options.get('ssh_user', 'root')
+
+    def get_gateway_port(self) -> int:
+        """
+        Get gateway SSH port
+
+        Returns:
+            Gateway SSH port number
+        """
+        return self.rsync_options.get('gateway_port', 22)
+
+    def is_gateway_enabled(self) -> bool:
+        """
+        Check if gateway/proxy is configured
+
+        Returns:
+            True if gateway is configured
+        """
+        return self.get_gateway_host() is not None
+
     def get_rsync_base_flags(self) -> List[str]:
         """
         Get base rsync flags from configuration
@@ -264,6 +309,9 @@ class ConfigManager:
 
         # Check that all applications referenced in node_groups exist
         for group, apps in self.node_groups.items():
+            # Handle case where apps is None (empty YAML entry)
+            if apps is None:
+                continue  # Skip groups with no applications defined
             for app in apps:
                 if app not in self.applications:
                     errors.append(
@@ -282,7 +330,8 @@ class ConfigManager:
                 # Only warn about empty applications if they're actually used in node_groups
                 app_used = False
                 for group, apps in self.node_groups.items():
-                    if app_name in apps:
+                    # Handle case where apps is None (empty YAML entry)
+                    if apps is not None and app_name in apps:
                         app_used = True
                         break
                 
