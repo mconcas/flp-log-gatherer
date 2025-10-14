@@ -441,6 +441,18 @@ rsync_options:
   # Set to null or omit to sync all files
   date_filter: null
 
+# Raw mode options (for quick disk usage estimation)
+raw_mode:
+  # Generic log directories to check for total size estimation
+  # These are standard directories that commonly contain logs across all systems
+  generic_log_dirs:
+    - /var/log
+    - /var/log/journal
+    - /tmp
+  
+  # Include journal paths from journal_options in raw mode checks
+  include_journal_paths: true
+
 # Journal collection options (for systemd journal logs)
 journal_options:
   # Default collection mode for journal logs:

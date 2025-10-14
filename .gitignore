@@ -29,7 +29,7 @@ env/
 # Collected logs (if using relative path)
 logs/
 collected_logs/
-SUMMARY.md
+SUMMARY*.md
 *.log
 
 # IDE

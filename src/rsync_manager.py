@@ -416,6 +416,312 @@ class RsyncManager:
         }
         return False, file_info
 
+    async def _check_remote_files_batched(self, jobs: List[RsyncJob]) -> List[Dict]:
+        """
+        Check multiple remote paths in a single SSH connection
+        Includes retry logic for transient SSH failures
+
+        Args:
+            jobs: List of RsyncJobs for the same host
+
+        Returns:
+            List of result dictionaries, one per job
+        """
+        if not jobs:
+            return []
+
+        # Use the first job for connection parameters (they should all be the same for the same host)
+        reference_job = jobs[0]
+        
+        for attempt in range(1, self.retry_count + 1):
+            try:
+                return await self._check_remote_files_batched_single(jobs, attempt)
+            except (asyncio.TimeoutError, OSError, ConnectionError) as e:
+                # Log SSH connection failures
+                logger.warning(
+                    f"[{reference_job.hostname}] SSH connection failed "
+                    f"(attempt {attempt}/{self.retry_count}): {str(e)}"
+                )
+
+                if attempt < self.retry_count:
+                    logger.warning(
+                        f"[{reference_job.hostname}] Retrying SSH connection in {self.retry_delay}s... "
+                        f"(will retry {len(jobs)} applications in single connection)"
+                    )
+                    await asyncio.sleep(self.retry_delay)
+                    continue
+                else:
+                    # All retries failed - return SSH error for all jobs
+                    logger.error(
+                        f"[{reference_job.hostname}] SSH connection failed after {self.retry_count} attempts: {str(e)}"
+                    )
+                    results = []
+                    for job in jobs:
+                        file_info = {
+                            'files': [],
+                            'total_size_bytes': 0,
+                            'total_size_human': '0 B',
+                            'file_count': 0,
+                            'raw_output': '',
+                            'error': f"SSH connection failed after {self.retry_count} attempts: {str(e)}",
+                            'ssh_error': True
+                        }
+                        results.append({
+                            'job': job,
+                            'exists': False,
+                            'file_info': file_info
+                        })
+                    return results
+            except Exception as e:
+                # Unexpected error
+                logger.error(
+                    f"[{reference_job.hostname}] Unexpected error during batched SSH check: {str(e)}"
+                )
+                results = []
+                for job in jobs:
+                    file_info = {
+                        'files': [],
+                        'total_size_bytes': 0,
+                        'total_size_human': '0 B',
+                        'file_count': 0,
+                        'raw_output': '',
+                        'error': f"Unexpected error: {str(e)}",
+                        'ssh_error': True
+                    }
+                    results.append({
+                        'job': job,
+                        'exists': False,
+                        'file_info': file_info
+                    })
+                return results
+
+        # Should not reach here - return error for all jobs
+        results = []
+        for job in jobs:
+            file_info = {
+                'files': [],
+                'total_size_bytes': 0,
+                'total_size_human': '0 B',
+                'file_count': 0,
+                'raw_output': '',
+                'error': "Max retries exceeded",
+                'ssh_error': True
+            }
+            results.append({
+                'job': job,
+                'exists': False,
+                'file_info': file_info
+            })
+        return results
+
+    async def _check_remote_files_batched_single(self, jobs: List[RsyncJob], attempt: int) -> List[Dict]:
+        """
+        Single attempt to check multiple remote paths in one SSH connection
+
+        Args:
+            jobs: List of RsyncJobs for the same host
+            attempt: Current attempt number (for logging)
+
+        Returns:
+            List of result dictionaries, one per job
+        """
+        if not jobs:
+            return []
+
+        reference_job = jobs[0]
+        ssh_target = f"{reference_job.ssh_user}@{reference_job.hostname}"
+
+        # Build SSH command
+        cmd = [
+            'ssh',
+            '-p', str(reference_job.ssh_port)
+        ]
+
+        # Add host key checking options if configured
+        if reference_job.ssh_ignore_host_key:
+            cmd.extend([
+                '-o', 'StrictHostKeyChecking=no',
+                '-o', 'UserKnownHostsFile=/dev/null',
+                '-o', 'LogLevel=ERROR'
+            ])
+
+        # Add gateway/proxy jump host configuration if specified
+        if reference_job.gateway_host:
+            gateway_user = reference_job.gateway_user or reference_job.ssh_user
+            cmd.extend([
+                '-o', f'ProxyJump={gateway_user}@{reference_job.gateway_host}:{reference_job.gateway_port}'
+            ])
+            logger.debug(
+                f"[{reference_job.hostname}] Using gateway for batched explore: {gateway_user}@{reference_job.gateway_host}:{reference_job.gateway_port}")
+
+        # Create a script that checks all paths in one go
+        # Use a unique separator to distinguish between different path results
+        separator = "=== PATH_SEPARATOR ==="
+        script_parts = []
+        
+        for i, job in enumerate(jobs):
+            # Add separator and job identifier
+            script_parts.append(f'echo "{separator}JOB_{i}:{job.app_name}:{job.remote_path}"')
+            # Check if path exists and get file listing
+            find_cmd = f'find {job.remote_path} -type f -exec ls -la {{}} \\; 2>/dev/null || ls -la {job.remote_path} 2>&1'
+            script_parts.append(find_cmd)
+
+        # Combine all commands into a single script
+        batch_script = ' ; '.join(script_parts)
+        cmd.extend([ssh_target, batch_script])
+
+        logger.info(
+            f"[{reference_job.hostname}] Making SSH connection for {len(jobs)} paths (attempt {attempt}/{self.retry_count})"
+        )
+        logger.debug(
+            f"[{reference_job.hostname}] Checking {len(jobs)} remote paths in batched SSH (attempt {attempt})"
+        )
+
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+
+        stdout, stderr = await asyncio.wait_for(
+            process.communicate(),
+            timeout=self.timeout * len(jobs)  # Scale timeout with number of paths
+        )
+
+        stdout_str = stdout.decode('utf-8', errors='replace')
+        stderr_str = stderr.decode('utf-8', errors='replace')
+
+        # Parse the batched output
+        return self._parse_batched_output(jobs, stdout_str, stderr_str, separator)
+
+    def _parse_batched_output(self, jobs: List[RsyncJob], stdout_str: str, stderr_str: str, separator: str) -> List[Dict]:
+        """
+        Parse the output from batched SSH command
+
+        Args:
+            jobs: List of RsyncJobs that were checked
+            stdout_str: Combined stdout from all path checks
+            stderr_str: Combined stderr
+            separator: Separator used to distinguish between path results
+
+        Returns:
+            List of result dictionaries, one per job
+        """
+        results = []
+        
+        # Split output by separator
+        sections = stdout_str.split(separator)
+        
+        # Create a mapping of job index to results
+        job_outputs = {}
+        
+        for section in sections:
+            if not section.strip():
+                continue
+                
+            lines = section.strip().split('\n')
+            if not lines:
+                continue
+                
+            # First line should be the job identifier
+            first_line = lines[0]
+            if first_line.startswith('JOB_'):
+                try:
+                    # Parse: JOB_0:app_name:path
+                    parts = first_line.split(':', 2)
+                    if len(parts) >= 3:
+                        job_idx = int(parts[0].replace('JOB_', ''))
+                        # Store the output for this job (excluding the identifier line)
+                        job_outputs[job_idx] = '\n'.join(lines[1:]) if len(lines) > 1 else ''
+                except (ValueError, IndexError):
+                    continue
+
+        # Process each job and create results
+        for i, job in enumerate(jobs):
+            output = job_outputs.get(i, '')
+            
+            logger.debug(
+                f"[{job.hostname}/{job.app_name}] Checking remote path: {job.remote_path} (batched)"
+            )
+            
+            if not output.strip():
+                # No output - path doesn't exist or no files
+                logger.debug(f"[{job.hostname}/{job.app_name}] Path not found or no files: {job.remote_path}")
+                file_info = {
+                    'files': [],
+                    'total_size_bytes': 0,
+                    'total_size_human': '0 B',
+                    'file_count': 0,
+                    'raw_output': output,
+                    'error': None,
+                    'ssh_error': False
+                }
+                results.append({
+                    'job': job,
+                    'exists': False,
+                    'file_info': file_info
+                })
+                continue
+
+            # Check for error indicators
+            if any(error in output.lower() for error in ['no such file', 'not found', 'permission denied']):
+                logger.debug(f"[{job.hostname}/{job.app_name}] Path not found or no files: {job.remote_path}")
+                file_info = {
+                    'files': [],
+                    'total_size_bytes': 0,
+                    'total_size_human': '0 B',
+                    'file_count': 0,
+                    'raw_output': output,
+                    'error': None,
+                    'ssh_error': False
+                }
+                results.append({
+                    'job': job,
+                    'exists': False,
+                    'file_info': file_info
+                })
+                continue
+
+            # Parse file information
+            file_list = parse_ls_output(output)
+            total_size = sum(f['size_bytes'] for f in file_list if 'size_bytes' in f)
+
+            if file_list:
+                logger.debug(f"[{job.hostname}/{job.app_name}] Found {len(file_list)} files, {human_readable_size(total_size)}")
+                file_info = {
+                    'files': file_list,
+                    'total_size_bytes': total_size,
+                    'total_size_human': human_readable_size(total_size),
+                    'file_count': len(file_list),
+                    'raw_output': output,
+                    'error': None,
+                    'ssh_error': False
+                }
+                results.append({
+                    'job': job,
+                    'exists': True,
+                    'file_info': file_info
+                })
+            else:
+                # Output exists but no files parsed - directory exists but empty or ls failed to parse
+                logger.debug(f"[{job.hostname}/{job.app_name}] Found 0 files, 0 B")
+                file_info = {
+                    'files': [],
+                    'total_size_bytes': 0,
+                    'total_size_human': '0 B',
+                    'file_count': 0,
+                    'raw_output': output,
+                    'error': None,
+                    'ssh_error': False
+                }
+                results.append({
+                    'job': job,
+                    'exists': True,  # Path exists but no files
+                    'file_info': file_info
+                })
+
+        return results
+
     async def _check_remote_file_exists_single(self, job: RsyncJob, attempt: int) -> Tuple[bool, Dict]:
         """
         Single attempt to check if remote files exist
@@ -561,6 +867,7 @@ class RsyncManager:
     async def explore_jobs(self, jobs: List[RsyncJob]) -> Dict[str, Dict]:
         """
         Explore remote files (check existence) for all jobs
+        Optimized to batch multiple checks per host into a single SSH connection
 
         Args:
             jobs: List of RsyncJobs to explore
@@ -570,15 +877,44 @@ class RsyncManager:
         """
         logger.info(f"Exploring {len(jobs)} remote locations")
 
+        # Group jobs by hostname to minimize SSH connections
+        jobs_by_host = {}
+        for job in jobs:
+            host_key = (job.hostname, job.ssh_user, job.ssh_port, job.gateway_host, job.gateway_user, job.gateway_port)
+            if host_key not in jobs_by_host:
+                jobs_by_host[host_key] = []
+            jobs_by_host[host_key].append(job)
+
+        logger.info(f"Batched into {len(jobs_by_host)} SSH connections (was {len(jobs)})")
+        
+        # Log the batching details
+        for host_key, host_jobs in jobs_by_host.items():
+            hostname = host_key[0]
+            logger.debug(f"Host {hostname}: {len(host_jobs)} applications to check in single SSH connection")
+
         semaphore = asyncio.Semaphore(self.max_parallel_jobs)
         ssh_failures = []  # Track SSH connection failures
 
-        async def bounded_explore(job: RsyncJob):
+        async def bounded_explore_host(host_key, host_jobs):
             async with semaphore:
-                exists, file_info = await self.check_remote_file_exists(job)
+                return await self._check_remote_files_batched(host_jobs)
 
+        # Create tasks for each host
+        tasks = [bounded_explore_host(host_key, host_jobs) for host_key, host_jobs in jobs_by_host.items()]
+        host_results = await asyncio.gather(*tasks)
+
+        # Organize results by hostname and app
+        organized = {}
+        for host_result in host_results:
+            for result in host_result:
+                job = result['job']
+                if job.hostname not in organized:
+                    organized[job.hostname] = {}
+
+                file_info = result['file_info']
+                
                 # Track SSH failures for summary
-                if not exists and file_info.get('ssh_error', False):
+                if not result['exists'] and file_info.get('ssh_error', False):
                     ssh_failures.append({
                         'hostname': job.hostname,
                         'app_name': job.app_name,
@@ -586,35 +922,18 @@ class RsyncManager:
                         'error': file_info.get('error', 'Unknown SSH error')
                     })
 
-                return {
-                    'job': job,
-                    'exists': exists,
-                    'file_info': file_info
+                organized[job.hostname][job.app_name] = {
+                    'remote_path': job.remote_path,
+                    'exists': result['exists'],
+                    'files': file_info.get('files', []),
+                    'total_size_bytes': file_info.get('total_size_bytes', 0),
+                    'total_size_human': file_info.get('total_size_human', '0 B'),
+                    'file_count': file_info.get('file_count', 0),
+                    # Keep for backward compatibility
+                    'output': file_info.get('raw_output', ''),
+                    'error': file_info.get('error'),
+                    'ssh_error': file_info.get('ssh_error', False)
                 }
-
-        tasks = [bounded_explore(job) for job in jobs]
-        results = await asyncio.gather(*tasks)
-
-        # Organize results by hostname and app
-        organized = {}
-        for result in results:
-            job = result['job']
-            if job.hostname not in organized:
-                organized[job.hostname] = {}
-
-            file_info = result['file_info']
-            organized[job.hostname][job.app_name] = {
-                'remote_path': job.remote_path,
-                'exists': result['exists'],
-                'files': file_info.get('files', []),
-                'total_size_bytes': file_info.get('total_size_bytes', 0),
-                'total_size_human': file_info.get('total_size_human', '0 B'),
-                'file_count': file_info.get('file_count', 0),
-                # Keep for backward compatibility
-                'output': file_info.get('raw_output', ''),
-                'error': file_info.get('error'),
-                'ssh_error': file_info.get('ssh_error', False)
-            }
 
         # Log SSH failure summary
         if ssh_failures:
@@ -625,7 +944,7 @@ class RsyncManager:
                     f"  {failure['hostname']}/{failure['app_name']}: {failure['error']}"
                 )
             logger.warning(
-                f"Total SSH failures: {len(ssh_failures)}/{len(jobs)} connections"
+                f"Total SSH failures: {len(ssh_failures)}/{len(jobs)} checks"
             )
         else:
             logger.info("All SSH connections successful")

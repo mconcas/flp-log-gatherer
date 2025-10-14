@@ -251,6 +251,111 @@ def run_list_archives(args):
     return 0
 
 
+async def run_raw(args):
+    """Run raw mode log directory size estimation"""
+    from src.raw_mode_manager import RawModeManager
+    from src.inventory_parser import InventoryParser
+    from src.config_manager import ConfigManager
+
+    try:
+        # Load configuration
+        config_manager = ConfigManager(args.config)
+        config_manager.load()
+        
+        # Parse inventory to get all hosts
+        inventory_parser = InventoryParser(args.inventory)
+        inventory_parser.parse()
+        hosts = inventory_parser.get_all_hosts()
+        
+        if not hosts:
+            logging.error("No hosts found in inventory")
+            return 1
+
+        logging.info(f"Found {len(hosts)} hosts in inventory for raw mode analysis")
+
+        # Get configuration values
+        rsync_opts = config_manager.config.get('rsync_options', {})
+        ssh_user = rsync_opts.get('ssh_user', 'root')
+        ssh_port = rsync_opts.get('ssh_port', 22)
+        ssh_ignore_host_key = rsync_opts.get('ssh_ignore_host_key', True)
+        
+        # Gateway configuration
+        gateway_host = config_manager.get_gateway_host()
+        gateway_user = config_manager.get_gateway_user() if config_manager.is_gateway_enabled() else None
+        gateway_port = config_manager.get_gateway_port()
+        
+        # Retry configuration
+        retry_count = config_manager.get_rsync_option('retry_count', 3)
+        retry_delay = config_manager.get_rsync_option('retry_delay', 2)
+        timeout = config_manager.get_rsync_option('timeout', 300)
+
+        # Create raw mode manager
+        raw_manager = RawModeManager(
+            config_manager=config_manager,
+            ssh_user=ssh_user,
+            ssh_port=ssh_port,
+            ssh_ignore_host_key=ssh_ignore_host_key,
+            gateway_host=gateway_host,
+            gateway_user=gateway_user,
+            gateway_port=gateway_port,
+            retry_count=retry_count,
+            retry_delay=retry_delay,
+            timeout=timeout
+        )
+
+        print("Checking raw log directory sizes...")
+        
+        # Check raw sizes on all hosts
+        results = await raw_manager.check_host_raw_sizes(hosts)
+        
+        # Generate and display summary
+        print("\n" + "="*100)
+        print("RAW LOG DIRECTORY SIZE RESULTS")
+        print("="*100)
+        
+        total_hosts = len(results)
+        successful_hosts = sum(1 for r in results.values() if r.get('success', False))
+        failed_hosts = total_hosts - successful_hosts
+        total_size = sum(r.get('total_size_bytes', 0) for r in results.values() if r.get('success', False))
+        
+        print(f"Hosts: {total_hosts} total, {successful_hosts} successful, {failed_hosts} failed")
+        print(f"Total Storage: {raw_manager._human_readable_size(total_size)}")
+        print("-"*100)
+        
+        # Show top hosts by size
+        sorted_results = sorted(results.items(), key=lambda x: x[1].get('total_size_bytes', 0), reverse=True)
+        
+        print(f"{'HOSTNAME':<30} {'TOTAL SIZE':<15} {'STATUS':<10} {'DIRECTORIES'}")
+        print("-"*100)
+        
+        for hostname, result in sorted_results[:20]:  # Show top 20
+            if result.get('success', False):
+                size = result.get('total_size_human', '0 B')
+                status = "✓ OK"
+                dir_count = len(result.get('directories', {}))
+                directories = f"{dir_count} dirs"
+            else:
+                size = "N/A"
+                status = "✗ FAILED"
+                directories = result.get('error', 'Unknown error')[:40]
+            
+            print(f"{hostname:<30} {size:<15} {status:<10} {directories}")
+        
+        if len(sorted_results) > 20:
+            print(f"... and {len(sorted_results) - 20} more hosts")
+        
+        print("="*100)
+        
+        # Generate markdown summary
+        raw_manager.generate_raw_summary(results, "SUMMARY_RAW.md")
+        
+        return 0
+
+    except Exception as e:
+        logging.error(f"Error during raw mode analysis: {e}")
+        return 1
+
+
 def run_compress(args):
     """Run compression on already-collected logs"""
     # Load config to get storage path
@@ -348,6 +453,10 @@ Examples:
     probe_parser = subparsers.add_parser('probe',
                                          help='Test connectivity and SSH access to all hosts')
 
+    # Raw command
+    raw_parser = subparsers.add_parser('raw',
+                                       help='Quick estimation of total log directory sizes')
+
     # Compress command
     compress_parser = subparsers.add_parser('compress',
                                             help='Compress already-collected logs')
@@ -379,6 +488,8 @@ Examples:
             return asyncio.run(run_explore(args))
         elif args.command == 'probe':
             return asyncio.run(run_probe(args))
+        elif args.command == 'raw':
+            return asyncio.run(run_raw(args))
         elif args.command == 'compress':
             return run_compress(args)
         elif args.command == 'list-archives':

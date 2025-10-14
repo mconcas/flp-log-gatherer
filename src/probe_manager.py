@@ -79,6 +79,7 @@ class ProbeManager:
     async def probe_hosts(self, hostnames: List[str]) -> List[Dict[str, any]]:
         """
         Probe multiple hosts in parallel.
+        Uses batched SSH connections through gateway when configured to minimize gateway load.
 
         Args:
             hostnames: List of hostnames to probe
@@ -88,26 +89,242 @@ class ProbeManager:
         """
         logger.info(f"Probing {len(hostnames)} hosts...")
 
-        # Probe all hosts in parallel
-        tasks = [self.probe_host(hostname) for hostname in hostnames]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        # If gateway is configured, use batched approach to minimize gateway connections
+        if self.gateway_host and len(hostnames) > 1:
+            logger.info(f"Using batched SSH probing through gateway {self.gateway_host} to reduce connection load")
+            return await self._probe_hosts_batched(hostnames)
+        else:
+            # No gateway or single host - use individual connections
+            tasks = [self.probe_host(hostname) for hostname in hostnames]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Handle any exceptions
-        final_results = []
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                logger.error(f"Error probing {hostnames[i]}: {result}")
-                final_results.append({
-                    'hostname': hostnames[i],
-                    'ping_success': False,
-                    'ping_time_ms': None,
-                    'ssh_success': False,
-                    'ssh_error': str(result)
-                })
+            # Handle any exceptions
+            final_results = []
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    logger.error(f"Error probing {hostnames[i]}: {result}")
+                    final_results.append({
+                        'hostname': hostnames[i],
+                        'ping_success': False,
+                        'ping_time_ms': None,
+                        'ssh_success': False,
+                        'ssh_error': str(result)
+                    })
+                else:
+                    final_results.append(result)
+
+            return final_results
+
+    async def _probe_hosts_batched(self, hostnames: List[str]) -> List[Dict[str, any]]:
+        """
+        Probe multiple hosts using a single SSH connection through the gateway.
+        This minimizes gateway connection overhead and avoids rate limiting.
+
+        Args:
+            hostnames: List of hostnames to probe
+
+        Returns:
+            List of probe result dictionaries
+        """
+        results = []
+        
+        # First, do ping tests in parallel (these don't use SSH)
+        ping_tasks = [self._test_ping(hostname) for hostname in hostnames]
+        ping_results = await asyncio.gather(*ping_tasks, return_exceptions=True)
+        
+        # Process ping results
+        ping_dict = {}
+        for i, ping_result in enumerate(ping_results):
+            hostname = hostnames[i]
+            if isinstance(ping_result, Exception):
+                ping_dict[hostname] = (False, None)
             else:
-                final_results.append(result)
+                ping_dict[hostname] = ping_result
 
-        return final_results
+        # Now do batched SSH tests through gateway
+        ssh_results = await self._test_ssh_batched(hostnames)
+        
+        # Combine results
+        for hostname in hostnames:
+            ping_success, ping_time = ping_dict.get(hostname, (False, None))
+            ssh_success, ssh_error = ssh_results.get(hostname, (False, "Unknown error"))
+            
+            results.append({
+                'hostname': hostname,
+                'ping_success': ping_success,
+                'ping_time_ms': ping_time,
+                'ssh_success': ssh_success,
+                'ssh_error': ssh_error
+            })
+
+        return results
+
+    async def _test_ssh_batched(self, hostnames: List[str]) -> Dict[str, Tuple[bool, str]]:
+        """
+        Test SSH connectivity to multiple hosts in a single SSH session through gateway.
+        This dramatically reduces gateway connection overhead.
+
+        Args:
+            hostnames: List of hostnames to test
+
+        Returns:
+            Dictionary mapping hostname to (success, error_message) tuple
+        """
+        results = {}
+        last_error = None
+
+        for attempt in range(1, self.retry_count + 1):
+            try:
+                logger.debug(f"Batched SSH test through gateway (attempt {attempt}/{self.retry_count}) for {len(hostnames)} hosts")
+
+                # Build SSH command to gateway
+                cmd = ['ssh']
+
+                # Add user if specified
+                if self.gateway_user:
+                    cmd.extend(['-l', self.gateway_user])
+
+                # Add SSH options
+                cmd.extend([
+                    '-o', 'ConnectTimeout=10',
+                    '-o', 'BatchMode=yes',
+                    '-o', 'LogLevel=ERROR'
+                ])
+
+                if not self.strict_host_key_checking:
+                    cmd.extend([
+                        '-o', 'StrictHostKeyChecking=no',
+                        '-o', 'UserKnownHostsFile=/dev/null'
+                    ])
+
+                # Connect to gateway
+                gateway_target = f"{self.gateway_host}"
+                if self.gateway_port != 22:
+                    cmd.extend(['-p', str(self.gateway_port)])
+
+                # Create a script that tests SSH to each target host from the gateway
+                separator = "=== HOST_SEPARATOR ==="
+                script_parts = []
+                
+                for i, hostname in enumerate(hostnames):
+                    # Add separator and hostname identifier
+                    script_parts.append(f'echo "{separator}HOST_{i}:{hostname}"')
+                    
+                    # Build SSH command from gateway to target host
+                    target_cmd = ['ssh']
+                    if self.ssh_user:
+                        target_cmd.extend(['-l', self.ssh_user])
+                    
+                    target_cmd.extend([
+                        '-o', 'ConnectTimeout=10',
+                        '-o', 'BatchMode=yes',
+                        '-o', 'LogLevel=ERROR'
+                    ])
+                    
+                    if not self.strict_host_key_checking:
+                        target_cmd.extend([
+                            '-o', 'StrictHostKeyChecking=no',
+                            '-o', 'UserKnownHostsFile=/dev/null'
+                        ])
+                    
+                    target_cmd.extend([hostname, 'echo', 'SSH_OK'])
+                    
+                    # Add the SSH command to the script (escape properly for shell)
+                    escaped_cmd = ' '.join(f"'{arg}'" if ' ' in arg else arg for arg in target_cmd)
+                    script_parts.append(f'{escaped_cmd} 2>&1')
+
+                # Combine all commands into a single script
+                batch_script = ' ; '.join(script_parts)
+                cmd.extend([gateway_target, batch_script])
+
+                logger.info(f"Making single SSH connection to gateway for {len(hostnames)} host probes (attempt {attempt})")
+
+                # Execute the batched command
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+
+                stdout, stderr = await proc.communicate()
+
+                if proc.returncode == 0:
+                    # Parse the batched output
+                    results = self._parse_batched_ssh_output(hostnames, stdout.decode('utf-8', errors='replace'), separator)
+                    logger.debug(f"Batched SSH test completed successfully for {len(results)} hosts")
+                    return results
+                else:
+                    last_error = f"Gateway SSH failed (code {proc.returncode}): {stderr.decode('utf-8', errors='replace')}"
+                    logger.warning(f"Batched SSH test failed: {last_error}")
+
+            except Exception as e:
+                last_error = str(e)
+                logger.warning(f"Batched SSH test attempt {attempt} failed: {last_error}")
+
+            # Wait before retry if not the last attempt
+            if attempt < self.retry_count:
+                logger.info(f"Retrying batched SSH test in {self.retry_delay}s...")
+                await asyncio.sleep(self.retry_delay)
+
+        # All attempts failed - return failure for all hosts
+        logger.error(f"All batched SSH test attempts failed. Last error: {last_error}")
+        return {hostname: (False, last_error or "SSH test failed") for hostname in hostnames}
+
+    def _parse_batched_ssh_output(self, hostnames: List[str], output: str, separator: str) -> Dict[str, Tuple[bool, str]]:
+        """
+        Parse the output from batched SSH command.
+
+        Args:
+            hostnames: List of hostnames that were tested
+            output: Combined stdout from all SSH tests
+            separator: Separator used to distinguish between host results
+
+        Returns:
+            Dictionary mapping hostname to (success, error_message) tuple
+        """
+        results = {}
+        
+        # Split output by separator
+        sections = output.split(separator)
+        
+        # Create a mapping of host index to results
+        host_outputs = {}
+        
+        for section in sections:
+            if not section.strip():
+                continue
+                
+            lines = section.strip().split('\n')
+            if not lines:
+                continue
+                
+            # First line should be the host identifier
+            first_line = lines[0]
+            if first_line.startswith('HOST_'):
+                try:
+                    # Parse: HOST_0:hostname
+                    parts = first_line.split(':', 1)
+                    if len(parts) >= 2:
+                        host_idx = int(parts[0].replace('HOST_', ''))
+                        # Store the output for this host (excluding the identifier line)
+                        host_outputs[host_idx] = '\n'.join(lines[1:]) if len(lines) > 1 else ''
+                except (ValueError, IndexError):
+                    continue
+
+        # Process each hostname and create results
+        for i, hostname in enumerate(hostnames):
+            output_text = host_outputs.get(i, '')
+            
+            if 'SSH_OK' in output_text:
+                results[hostname] = (True, None)
+                logger.debug(f"[{hostname}] SSH test successful (batched)")
+            else:
+                # Extract error message
+                error_msg = output_text.strip() if output_text.strip() else "SSH connection failed"
+                results[hostname] = (False, error_msg)
+                logger.debug(f"[{hostname}] SSH test failed (batched): {error_msg}")
+
+        return results
 
     async def _test_ping(self, hostname: str) -> Tuple[bool, float]:
         """
