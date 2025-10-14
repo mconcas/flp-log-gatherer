@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.7"
 license = {text = "MIT"}
 authors = [
-    {name = "Marco Concas", email = "marco.concas@cern.ch"}
+    {name = "Matteo Concas", email = "matteo.concas@cern.ch"}
 ]
 keywords = ["logs", "rsync", "systemd", "journal", "collection", "monitoring"]
 classifiers = [
