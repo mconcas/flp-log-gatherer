@@ -142,7 +142,8 @@ class LogCollector:
                             ssh_ignore_host_key=self.config.get_rsync_option(
                                 'ssh_ignore_host_key', True),
                             gateway_host=self.config.get_gateway_host(),
-                            gateway_user=self.config.get_gateway_user() if self.config.is_gateway_enabled() else None,
+                            gateway_user=self.config.get_gateway_user(
+                            ) if self.config.is_gateway_enabled() else None,
                             gateway_port=self.config.get_gateway_port(),
                             flags=self.config.get_rsync_base_flags()
                         )
@@ -186,7 +187,8 @@ class LogCollector:
                                 ssh_ignore_host_key=self.config.get_rsync_option(
                                     'ssh_ignore_host_key', True),
                                 gateway_host=self.config.get_gateway_host(),
-                                gateway_user=self.config.get_gateway_user() if self.config.is_gateway_enabled() else None,
+                                gateway_user=self.config.get_gateway_user(
+                                ) if self.config.is_gateway_enabled() else None,
                                 gateway_port=self.config.get_gateway_port(),
                                 flags=self.config.get_rsync_base_flags()
                             )
@@ -390,10 +392,11 @@ class LogCollector:
                     error = app_info.get('error') or app_info.get(
                         'output', '').strip()
                     is_ssh_error = app_info.get('ssh_error', False)
-                    
+
                     if is_ssh_error:
                         # Highlight SSH connection errors differently
-                        print(f"    \033[91mSSH Connection Error:\033[0m {error}")
+                        print(
+                            f"    \033[91mSSH Connection Error:\033[0m {error}")
                     elif error:
                         # Filter out SSH warnings/noise for legitimate "file not found"
                         error_lines = []
@@ -431,7 +434,7 @@ class LogCollector:
             print("="*80)
             print(
                 f"\033[1;32mOVERALL TOTAL: {total_files_all_hosts} files, {total_size_human}\033[0m")
-        
+
         # Show SSH connection summary
         total_apps = 0
         ssh_errors = 0
@@ -440,34 +443,36 @@ class LogCollector:
                 total_apps += 1
                 if app_info.get('ssh_error', False):
                     ssh_errors += 1
-        
+
         successful_connections = total_apps - ssh_errors
-        print(f"\033[1;34mSSH CONNECTIONS: {successful_connections}/{total_apps} successful\033[0m")
-        
+        print(
+            f"\033[1;34mSSH CONNECTIONS: {successful_connections}/{total_apps} successful\033[0m")
+
         if ssh_errors > 0:
-            print(f"\033[1;33mSSH FAILURES: {ssh_errors} connection(s) failed - check logs for details\033[0m")
-        
+            print(
+                f"\033[1;33mSSH FAILURES: {ssh_errors} connection(s) failed - check logs for details\033[0m")
+
         print("="*80)
 
     def _save_application_summary_markdown(self, results: Dict) -> None:
         """
         Generate per-application summary in Markdown format and save to SUMMARY.md file
-        
+
         Args:
             results: Exploration results from explore_remote_files()
         """
         from .rsync_manager import human_readable_size
         from pathlib import Path
-        
+
         # Aggregate data by application across all hosts
         app_summary = {}
-        
+
         for hostname, apps in results.items():
             for app_name, app_info in apps.items():
                 if app_info['exists']:
                     file_count = app_info.get('file_count', 0)
                     total_size_bytes = app_info.get('total_size_bytes', 0)
-                    
+
                     if app_name not in app_summary:
                         app_summary[app_name] = {
                             'total_files': 0,
@@ -475,77 +480,83 @@ class LogCollector:
                             'host_count': 0,
                             'hosts': []
                         }
-                    
+
                     app_summary[app_name]['total_files'] += file_count
                     app_summary[app_name]['total_size_bytes'] += total_size_bytes
                     if file_count > 0:  # Only count hosts that actually have files
                         app_summary[app_name]['host_count'] += 1
                         app_summary[app_name]['hosts'].append(hostname)
-        
+
         if not app_summary:
             return
-        
+
         # Generate markdown content
         markdown_content = []
         markdown_content.append("# Log Collection Exploration Summary")
         markdown_content.append("")
         markdown_content.append("## Per-Application Overview")
         markdown_content.append("")
-        markdown_content.append("| Application | Files Found | Total Size | Hosts with Files |")
-        markdown_content.append("|-------------|-------------|------------|------------------|")
-        
+        markdown_content.append(
+            "| Application | Files Found | Total Size | Hosts with Files |")
+        markdown_content.append(
+            "|-------------|-------------|------------|------------------|")
+
         # Calculate overall totals
         grand_total_files = 0
         grand_total_size = 0
-        
+
         # Sort applications by total size (largest first)
-        sorted_apps = sorted(app_summary.items(), 
-                           key=lambda x: x[1]['total_size_bytes'], 
-                           reverse=True)
-        
+        sorted_apps = sorted(app_summary.items(),
+                             key=lambda x: x[1]['total_size_bytes'],
+                             reverse=True)
+
         for app_name, summary in sorted_apps:
             files = summary['total_files']
             size_human = human_readable_size(summary['total_size_bytes'])
             host_count = summary['host_count']
-            
+
             grand_total_files += files
             grand_total_size += summary['total_size_bytes']
-            
-            markdown_content.append(f"| `{app_name}` | {files:,} | {size_human} | {host_count} |")
-        
+
+            markdown_content.append(
+                f"| `{app_name}` | {files:,} | {size_human} | {host_count} |")
+
         # Add totals row
         grand_total_human = human_readable_size(grand_total_size)
-        markdown_content.append(f"| **TOTAL** | **{grand_total_files:,}** | **{grand_total_human}** | **{len(results)}** |")
-        
+        markdown_content.append(
+            f"| **TOTAL** | **{grand_total_files:,}** | **{grand_total_human}** | **{len(results)}** |")
+
         markdown_content.append("")
         markdown_content.append("## Detailed Breakdown")
         markdown_content.append("")
-        
+
         for app_name, summary in sorted_apps:
             if summary['total_files'] > 0:
                 files = summary['total_files']
                 size_human = human_readable_size(summary['total_size_bytes'])
                 hosts = summary['hosts']
-                
+
                 markdown_content.append(f"### {app_name}")
                 markdown_content.append(f"- **Files:** {files:,}")
                 markdown_content.append(f"- **Total Size:** {size_human}")
                 markdown_content.append(f"- **Hosts:** {len(hosts)} host(s)")
                 if len(hosts) <= 10:  # Show host list if not too many
-                    markdown_content.append(f"- **Host List:** {', '.join(sorted(hosts))}")
+                    markdown_content.append(
+                        f"- **Host List:** {', '.join(sorted(hosts))}")
                 else:
-                    markdown_content.append(f"- **Host List:** {', '.join(sorted(hosts[:10]))} + {len(hosts)-10} more")
+                    markdown_content.append(
+                        f"- **Host List:** {', '.join(sorted(hosts[:10]))} + {len(hosts)-10} more")
                 markdown_content.append("")
-        
+
         from datetime import datetime
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         markdown_content.append(f"*Generated on {timestamp}*")
-        
+
         # Write to SUMMARY.md file in current working directory
         summary_file = Path("SUMMARY.md")
         with open(summary_file, 'w') as f:
             f.write('\n'.join(markdown_content))
-        
+
         print(f"\nSummary written to: {summary_file.absolute()}")
 
     def print_summary(self) -> None:

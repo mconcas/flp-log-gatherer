@@ -147,6 +147,9 @@ async def run_explore(args):
         # Print results
         collector.print_exploration_results(results)
 
+        # Save SUMMARY.md file
+        collector._save_application_summary_markdown(results)
+
         return 0
 
     except Exception as e:
@@ -186,7 +189,9 @@ async def run_probe(args):
             strict_host_key_checking=strict_host_key,
             gateway_host=config.get_gateway_host(),
             gateway_user=config.get_gateway_user() if config.is_gateway_enabled() else None,
-            gateway_port=config.get_gateway_port()
+            gateway_port=config.get_gateway_port(),
+            retry_count=config.get_rsync_option('retry_count', 3),
+            retry_delay=config.get_rsync_option('retry_delay', 2)
         )
 
         # Probe all hosts

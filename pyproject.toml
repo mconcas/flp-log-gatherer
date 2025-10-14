@@ -31,8 +31,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/mconcas/log-puller"
-Repository = "https://github.com/mconcas/log-puller"
+Homepage = "https://github.com/mconcas/flp-log-gatherer"
+Repository = "https://github.com/mconcas/flp-log-gatherer"
 
 [project.scripts]
 flp-log-gatherer = "src.cli:main"

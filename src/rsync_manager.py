@@ -197,13 +197,14 @@ class RsyncManager:
         ssh_opts = f"ssh -p {job.ssh_port}"
         if job.ssh_ignore_host_key:
             ssh_opts += " -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
-        
+
         # Add gateway/proxy jump host configuration if specified
         if job.gateway_host:
             gateway_user = job.gateway_user or job.ssh_user
             ssh_opts += f" -o ProxyJump={gateway_user}@{job.gateway_host}:{job.gateway_port}"
-            logger.debug(f"[{job.hostname}/{job.app_name}] Using gateway: {gateway_user}@{job.gateway_host}:{job.gateway_port}")
-        
+            logger.debug(
+                f"[{job.hostname}/{job.app_name}] Using gateway: {gateway_user}@{job.gateway_host}:{job.gateway_port}")
+
         cmd.extend(['-e', ssh_opts])
 
         # Add source and destination
@@ -365,7 +366,7 @@ class RsyncManager:
                     f"[{job.hostname}/{job.app_name}] SSH connection failed "
                     f"(attempt {attempt}/{self.retry_count}): {str(e)}"
                 )
-                
+
                 if attempt < self.retry_count:
                     logger.info(
                         f"[{job.hostname}/{job.app_name}] Retrying SSH connection in {self.retry_delay}s..."
@@ -418,11 +419,11 @@ class RsyncManager:
     async def _check_remote_file_exists_single(self, job: RsyncJob, attempt: int) -> Tuple[bool, Dict]:
         """
         Single attempt to check if remote files exist
-        
+
         Args:
             job: RsyncJob to check
             attempt: Current attempt number (for logging)
-            
+
         Returns:
             Tuple of (exists, file_info_dict)
         """
@@ -448,7 +449,8 @@ class RsyncManager:
             cmd.extend([
                 '-o', f'ProxyJump={gateway_user}@{job.gateway_host}:{job.gateway_port}'
             ])
-            logger.debug(f"[{job.hostname}/{job.app_name}] Using gateway for explore: {gateway_user}@{job.gateway_host}:{job.gateway_port}")
+            logger.debug(
+                f"[{job.hostname}/{job.app_name}] Using gateway for explore: {gateway_user}@{job.gateway_host}:{job.gateway_port}")
 
         # Use find command to recursively get all files with sizes
         # This handles directories that contain subdirectories with actual files
@@ -507,16 +509,17 @@ class RsyncManager:
                 'permission denied', 'no route to host', 'connection reset',
                 'ssh: could not resolve hostname', 'operation timed out'
             ])
-            
+
             if is_ssh_error:
                 # This is an SSH connection issue, not a file not found issue
-                raise ConnectionError(f"SSH connection issue: {stderr_str.strip()}")
-            
+                raise ConnectionError(
+                    f"SSH connection issue: {stderr_str.strip()}")
+
             # This appears to be a legitimate "file not found" case
             logger.debug(
                 f"[{job.hostname}/{job.app_name}] Path not found or no files: {job.remote_path}"
             )
-            
+
             file_info = {
                 'files': [],
                 'total_size_bytes': 0,
@@ -573,7 +576,7 @@ class RsyncManager:
         async def bounded_explore(job: RsyncJob):
             async with semaphore:
                 exists, file_info = await self.check_remote_file_exists(job)
-                
+
                 # Track SSH failures for summary
                 if not exists and file_info.get('ssh_error', False):
                     ssh_failures.append({
@@ -582,7 +585,7 @@ class RsyncManager:
                         'remote_path': job.remote_path,
                         'error': file_info.get('error', 'Unknown SSH error')
                     })
-                
+
                 return {
                     'job': job,
                     'exists': exists,
@@ -615,7 +618,8 @@ class RsyncManager:
 
         # Log SSH failure summary
         if ssh_failures:
-            logger.warning(f"SSH connection failures occurred during exploration:")
+            logger.warning(
+                f"SSH connection failures occurred during exploration:")
             for failure in ssh_failures:
                 logger.warning(
                     f"  {failure['hostname']}/{failure['app_name']}: {failure['error']}"

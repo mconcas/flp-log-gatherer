@@ -60,7 +60,7 @@ class InventoryParser:
 
                     # Expand host patterns (e.g., hostname[001:004])
                     expanded_hosts = self._expand_host_pattern(line)
-                    
+
                     for host in expanded_hosts:
                         self.groups[current_group].append(host)
 
@@ -74,40 +74,40 @@ class InventoryParser:
     def _expand_host_pattern(self, host_line: str) -> List[str]:
         """
         Expand Ansible-style host patterns like 'hostname[start:end]'
-        
+
         Args:
             host_line: Host line that may contain expansion pattern
-            
+
         Returns:
             List of expanded hostnames, or single hostname if no pattern
         """
         # Split the line to get just the host part (before any variables)
         host_part = host_line.split()[0]
-        
+
         match = self.expansion_pattern.match(host_part)
         if not match:
             # No expansion pattern, return as-is
             return [host_part]
-        
+
         prefix = match.group(1)
         start_str = match.group(2)
         end_str = match.group(3)
         suffix = match.group(4) if match.group(4) else ""
-        
+
         try:
             start = int(start_str)
             end = int(end_str)
         except ValueError:
             # Invalid range, return as-is
             return [host_part]
-        
+
         # Handle invalid range (end < start)
         if end < start:
             return [host_part]
-        
+
         # Determine zero-padding width from the start string
         padding_width = len(start_str)
-        
+
         # Generate expanded hostnames
         expanded = []
         for i in range(start, end + 1):
@@ -115,7 +115,7 @@ class InventoryParser:
             padded_num = str(i).zfill(padding_width)
             hostname = f"{prefix}{padded_num}{suffix}"
             expanded.append(hostname)
-            
+
         return expanded
 
     def get_groups(self) -> Dict[str, List[str]]:

@@ -20,8 +20,9 @@ logger = logging.getLogger(__name__)
 class ProbeManager:
     """Manages probing of remote hosts for connectivity and SSH access."""
 
-    def __init__(self, ssh_user: str = None, strict_host_key_checking: bool = True, 
-                 gateway_host: str = None, gateway_user: str = None, gateway_port: int = 22):
+    def __init__(self, ssh_user: str = None, strict_host_key_checking: bool = True,
+                 gateway_host: str = None, gateway_user: str = None, gateway_port: int = 22,
+                 retry_count: int = 3, retry_delay: int = 2):
         """
         Initialize the probe manager.
 
@@ -31,12 +32,16 @@ class ProbeManager:
             gateway_host: SSH gateway/jump host (None disables gateway)
             gateway_user: SSH username for gateway (None uses ssh_user)
             gateway_port: SSH port for gateway connection
+            retry_count: Number of retry attempts for failed connections
+            retry_delay: Delay in seconds between retry attempts
         """
         self.ssh_user = ssh_user
         self.strict_host_key_checking = strict_host_key_checking
         self.gateway_host = gateway_host
         self.gateway_user = gateway_user or ssh_user
         self.gateway_port = gateway_port
+        self.retry_count = retry_count
+        self.retry_delay = retry_delay
 
     async def probe_host(self, hostname: str) -> Dict[str, any]:
         """
@@ -187,7 +192,8 @@ class ProbeManager:
                             return True, avg_time
 
                 # If we can't parse the time, still return success
-                logger.debug(f"[{hostname}] Direct ping successful (time not parsed)")
+                logger.debug(
+                    f"[{hostname}] Direct ping successful (time not parsed)")
                 return True, None
             else:
                 logger.debug(f"[{hostname}] Direct ping failed")
@@ -210,7 +216,8 @@ class ProbeManager:
             Tuple of (success: bool, avg_time_ms: float or None)
         """
         try:
-            logger.debug(f"[{hostname}] Testing ping through gateway {self.gateway_host}...")
+            logger.debug(
+                f"[{hostname}] Testing ping through gateway {self.gateway_host}...")
 
             # Build SSH command to execute ping on gateway
             ssh_cmd = ['ssh']
@@ -261,15 +268,18 @@ class ProbeManager:
                             return True, avg_time
 
                 # If we can't parse the time, still return success
-                logger.debug(f"[{hostname}] Gateway ping successful (time not parsed)")
+                logger.debug(
+                    f"[{hostname}] Gateway ping successful (time not parsed)")
                 return True, None
             else:
                 # Check if it's a gateway connection issue vs target unreachable
                 stderr_output = stderr.decode()
                 if any(keyword in stderr_output.lower() for keyword in ['connection refused', 'connection timed out', 'host unreachable']):
-                    logger.debug(f"[{hostname}] Gateway connection failed: {stderr_output}")
+                    logger.debug(
+                        f"[{hostname}] Gateway connection failed: {stderr_output}")
                 else:
-                    logger.debug(f"[{hostname}] Ping through gateway failed (target unreachable)")
+                    logger.debug(
+                        f"[{hostname}] Ping through gateway failed (target unreachable)")
                 return False, None
 
         except Exception as e:
@@ -278,9 +288,10 @@ class ProbeManager:
 
     async def _test_ssh(self, hostname: str) -> Tuple[bool, str]:
         """
-        Test SSH connection availability.
+        Test SSH connection availability with retry logic.
 
         Attempts to establish SSH connection with a simple command.
+        Retries on transient connection failures.
 
         Args:
             hostname: The hostname to connect to
@@ -288,61 +299,107 @@ class ProbeManager:
         Returns:
             Tuple of (success: bool, error_message: str or None)
         """
-        try:
-            logger.debug(f"[{hostname}] Testing SSH connection...")
+        last_error = None
 
-            # Build SSH command
-            cmd = ['ssh']
+        for attempt in range(1, self.retry_count + 1):
+            try:
+                logger.debug(
+                    f"[{hostname}] Testing SSH connection (attempt {attempt}/{self.retry_count})...")
 
-            # Add user if specified
-            if self.ssh_user:
-                cmd.extend(['-l', self.ssh_user])
+                # Build SSH command
+                cmd = ['ssh']
 
-            # Add SSH options
-            cmd.extend([
-                '-o', 'ConnectTimeout=10',
-                '-o', 'BatchMode=yes',
-                '-o', 'LogLevel=ERROR'
-            ])
+                # Add user if specified
+                if self.ssh_user:
+                    cmd.extend(['-l', self.ssh_user])
 
-            if not self.strict_host_key_checking:
+                # Add SSH options
                 cmd.extend([
-                    '-o', 'StrictHostKeyChecking=no',
-                    '-o', 'UserKnownHostsFile=/dev/null'
+                    '-o', 'ConnectTimeout=10',
+                    '-o', 'BatchMode=yes',
+                    '-o', 'LogLevel=ERROR'
                 ])
 
-            # Add gateway/proxy jump configuration if specified
-            if self.gateway_host:
-                cmd.extend([
-                    '-o', f'ProxyJump={self.gateway_user}@{self.gateway_host}:{self.gateway_port}'
-                ])
-                logger.debug(f"[{hostname}] Using gateway: {self.gateway_user}@{self.gateway_host}:{self.gateway_port}")
+                if not self.strict_host_key_checking:
+                    cmd.extend([
+                        '-o', 'StrictHostKeyChecking=no',
+                        '-o', 'UserKnownHostsFile=/dev/null'
+                    ])
 
-            # Add hostname and simple command
-            cmd.extend([hostname, 'echo', 'SSH_OK'])
+                # Add gateway/proxy jump configuration if specified
+                if self.gateway_host:
+                    cmd.extend([
+                        '-o', f'ProxyJump={self.gateway_user}@{self.gateway_host}:{self.gateway_port}'
+                    ])
+                    if attempt == 1:  # Only log gateway info on first attempt
+                        logger.debug(
+                            f"[{hostname}] Using gateway: {self.gateway_user}@{self.gateway_host}:{self.gateway_port}")
 
-            # Execute SSH command
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
+                # Add hostname and simple command
+                cmd.extend([hostname, 'echo', 'SSH_OK'])
 
-            stdout, stderr = await proc.communicate()
+                # Execute SSH command
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
 
-            if proc.returncode == 0 and b'SSH_OK' in stdout:
-                logger.debug(f"[{hostname}] SSH connection successful")
-                return True, None
-            else:
-                error_msg = stderr.decode().strip(
-                ) if stderr else f"Exit code: {proc.returncode}"
-                logger.warning(
-                    f"[{hostname}] SSH connection failed: {error_msg}")
-                return False, error_msg
+                stdout, stderr = await proc.communicate()
 
-        except Exception as e:
-            logger.error(f"[{hostname}] SSH error: {e}")
-            return False, str(e)
+                if proc.returncode == 0 and b'SSH_OK' in stdout:
+                    if attempt > 1:
+                        logger.info(
+                            f"[{hostname}] SSH connection successful on attempt {attempt}")
+                    else:
+                        logger.debug(f"[{hostname}] SSH connection successful")
+                    return True, None
+                else:
+                    error_msg = stderr.decode().strip(
+                    ) if stderr else f"Exit code: {proc.returncode}"
+                    last_error = error_msg
+
+                    # Check if this is a transient error that should be retried
+                    is_transient_error = any(indicator in error_msg.lower() for indicator in [
+                        'connection closed by remote host',
+                        'kex_exchange_identification',
+                        'connection reset',
+                        'connection timed out',
+                        'temporary failure',
+                        'resource temporarily unavailable'
+                    ])
+
+                    if is_transient_error and attempt < self.retry_count:
+                        logger.warning(
+                            f"[{hostname}] Transient SSH error (attempt {attempt}/{self.retry_count}): {error_msg}")
+                        logger.info(
+                            f"[{hostname}] Retrying SSH connection in {self.retry_delay}s...")
+                        await asyncio.sleep(self.retry_delay)
+                        continue
+                    elif not is_transient_error:
+                        # Non-transient error, don't retry
+                        logger.warning(
+                            f"[{hostname}] SSH connection failed (non-transient): {error_msg}")
+                        return False, error_msg
+                    else:
+                        # Last attempt failed
+                        logger.warning(
+                            f"[{hostname}] SSH connection failed after {attempt} attempts: {error_msg}")
+                        return False, error_msg
+
+            except Exception as e:
+                last_error = str(e)
+                logger.error(
+                    f"[{hostname}] SSH error on attempt {attempt}: {e}")
+                if attempt < self.retry_count:
+                    logger.info(
+                        f"[{hostname}] Retrying SSH connection in {self.retry_delay}s...")
+                    await asyncio.sleep(self.retry_delay)
+                    continue
+                else:
+                    return False, last_error
+
+        return False, last_error or "Max retries exceeded"
 
     @staticmethod
     def print_probe_results(results: List[Dict[str, any]], gateway_info: Dict[str, str] = None):
@@ -356,7 +413,8 @@ class ProbeManager:
         print("\n" + "=" * 100)
         print("PROBE RESULTS")
         if gateway_info:
-            print(f"Gateway: {gateway_info['user']}@{gateway_info['host']}:{gateway_info['port']}")
+            print(
+                f"Gateway: {gateway_info['user']}@{gateway_info['host']}:{gateway_info['port']}")
         print("=" * 100)
 
         # Calculate column widths

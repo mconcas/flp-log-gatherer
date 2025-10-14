@@ -30,6 +30,7 @@ env/
 logs/
 collected_logs/
 SUMMARY.md
+*.log
 
 # IDE
 .vscode/

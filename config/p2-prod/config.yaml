@@ -373,8 +373,8 @@ node_groups:
     - consul
     - telegraf
 
-  gitlab-runners:
-  p2-cwf-mirror:
+  # gitlab-runners:
+  # p2-cwf-mirror:
   influxdb:
     - consul
     - telegraf
@@ -410,7 +410,7 @@ rsync_options:
   # Gateway/Proxy configuration for SSH connections
   # Use this when target hosts are only accessible through a jump host
   # Set gateway_host to enable proxy connections (e.g., 'gateway.example.com')
-  gateway_host: alio2-cr1-hv-gw01-gpn
+  gateway_host: alio2-cr1-hv-gw04-gpn
   # SSH user for gateway connection (defaults to ssh_user if not specified)
   gateway_user: root
   # SSH port for gateway connection
