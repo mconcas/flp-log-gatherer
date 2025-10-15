@@ -549,11 +549,12 @@ class LogCollector:
                 markdown_content.append("")
 
         from datetime import datetime
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        markdown_content.append(f"*Generated on {timestamp}*")
+        timestamp_display = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        timestamp_file = datetime.now().strftime('%Y%m%d_%H%M%S')
+        markdown_content.append(f"*Generated on {timestamp_display}*")
 
-        # Write to SUMMARY.md file in current working directory
-        summary_file = Path("SUMMARY.md")
+        # Write to timestamped SUMMARY file in current working directory
+        summary_file = Path(f"SUMMARY_{timestamp_file}.md")
         with open(summary_file, 'w') as f:
             f.write('\n'.join(markdown_content))
 

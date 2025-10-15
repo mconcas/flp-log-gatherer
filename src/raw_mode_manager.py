@@ -531,14 +531,17 @@ class RawModeManager:
         else:
             return f"{size:.1f} {units[unit_index]}"
 
-    def generate_raw_summary(self, results: Dict[str, Dict], output_file: str = "SUMMARY_RAW.md") -> None:
+    def generate_raw_summary(self, results: Dict[str, Dict], output_file: str = None) -> None:
         """
         Generate a markdown summary of raw mode results.
 
         Args:
             results: Dictionary mapping hostname to size information
-            output_file: Output file path for the summary
+            output_file: Output file path for the summary (auto-generated with timestamp if None)
         """
+        if output_file is None:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            output_file = f"SUMMARY_RAW_{timestamp}.md"
         total_bytes_all = 0
         successful_hosts = 0
         failed_hosts = 0

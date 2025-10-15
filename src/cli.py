@@ -346,8 +346,8 @@ async def run_raw(args):
         
         print("="*100)
         
-        # Generate markdown summary
-        raw_manager.generate_raw_summary(results, "SUMMARY_RAW.md")
+        # Generate markdown summary with timestamp
+        raw_manager.generate_raw_summary(results)
         
         return 0
 

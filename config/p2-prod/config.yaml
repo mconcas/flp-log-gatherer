@@ -449,6 +449,7 @@ raw_mode:
     - /var/log
     - /var/log/journal
     - /tmp
+    - /data/logs
   
   # Include journal paths from journal_options in raw mode checks
   include_journal_paths: true
