@@ -103,7 +103,7 @@ applications:
   # Infologger
   infologger:
     log_paths:
-      - /var/log/o2-ilg*
+      - /data/logs/o2-ilg*
     journal: false # Use file-based logs only
     journal_mode: binary # Optional: not used when journal: false
 
@@ -154,7 +154,8 @@ applications:
   # Nginx
   nginx:
     log_paths:
-      - /var/log/nginx
+      # - /var/log/nginx
+      - /data/logs/nginx
     journal: false # Use file-based logs only
     journal_mode: binary # Optional: not used when journal: false
 
@@ -347,7 +348,7 @@ node_groups:
     - nomad
 
   calib-dcs:
-    - infologger
+    - infologger-daemon
     - consul
     - telegraf
 
@@ -375,6 +376,7 @@ node_groups:
     - telegraf
 
   ilg:
+    - infologger
     - consul
     - telegraf
 
