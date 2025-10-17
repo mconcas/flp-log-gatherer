@@ -104,10 +104,16 @@ applications:
   infologger:
     log_paths:
       - /var/log/o2-ilg*
-      - /var/log/o2-infologger-daemon.log*
     journal: false # Use file-based logs only
     journal_mode: binary # Optional: not used when journal: false
 
+  # Infologger daemon
+  infologger-daemon:
+    log_paths:
+      - /var/log/o2-infologger-daemon.log*
+    journal: false # Use file-based logs only
+    journal_mode: binary # Optional: not used when journal: false
+  
   # Kafka
   kafka:
     log_paths:
@@ -283,10 +289,10 @@ node_groups:
     - telegraf
 
   flps:
+    - infologger-daemon
     - consul
     - mesos
     - telegraf
-    - infologger
     - ccdb-memory
 
   index-page:
@@ -346,7 +352,6 @@ node_groups:
     - telegraf
 
   qc:
-    - infologger
     - consul
     - telegraf
     - ccdb-memory
@@ -383,7 +388,7 @@ node_groups:
 # Rsync and collection options
 rsync_options:
   # Maximum number of parallel rsync jobs
-  max_parallel_jobs: 5
+  max_parallel_jobs: 10
 
   # Enable post-sync compression of collected logs (creates tar.gz archives)
   # Set to false to keep logs uncompressed (default, saves CPU and allows immediate access)
@@ -394,7 +399,7 @@ rsync_options:
   # Local directory where logs will be stored
   # Can be absolute path (e.g., /var/logs/collected) or relative to this directory
   # Directory will be created automatically if it doesn't exist
-  local_storage: /data/logs/p2-staging
+  local_storage: /data/logs/p2-prod
 
   # SSH user for remote connections
   ssh_user: root
@@ -448,8 +453,8 @@ raw_mode:
   generic_log_dirs:
     - /var/log
     - /var/log/journal
-    - /tmp
     - /data/logs
+    - /data/pgsql
   
   # Include journal paths from journal_options in raw mode checks
   include_journal_paths: true

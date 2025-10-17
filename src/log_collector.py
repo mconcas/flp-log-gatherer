@@ -560,6 +560,97 @@ class LogCollector:
 
         print(f"\nSummary written to: {summary_file.absolute()}")
 
+    def _save_sync_summary_markdown(self, summary: Dict, start_time, end_time) -> None:
+        """
+        Generate sync summary in Markdown format and save to timestamped SUMMARY.md file
+
+        Args:
+            summary: Collection results from collect_logs()
+            start_time: When the sync started
+            end_time: When the sync ended
+        """
+        from datetime import datetime
+        from pathlib import Path
+
+        # Create timestamped filename
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        summary_file = Path(f"SUMMARY_{timestamp}.md")
+
+        duration = end_time - start_time
+        duration_str = str(duration).split('.')[0]  # Remove microseconds
+
+        markdown_content = []
+        markdown_content.append(f"# Log Collection Summary")
+        markdown_content.append(f"*Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*")
+        markdown_content.append("")
+        markdown_content.append("## Collection Overview")
+        markdown_content.append("")
+        markdown_content.append(f"- **Started:** {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        markdown_content.append(f"- **Completed:** {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        markdown_content.append(f"- **Duration:** {duration_str}")
+        markdown_content.append("")
+
+        # Job statistics
+        markdown_content.append("## Job Statistics")
+        markdown_content.append("")
+        markdown_content.append("| Type | Total | Successful | Failed | Success Rate |")
+        markdown_content.append("|------|-------|------------|--------|--------------|")
+        
+        if summary.get('rsync', {}).get('total', 0) > 0:
+            rsync = summary['rsync']
+            success_rate = (rsync['successful'] / rsync['total']) * 100 if rsync['total'] > 0 else 0
+            markdown_content.append(f"| Rsync | {rsync['total']} | {rsync['successful']} | {rsync['failed']} | {success_rate:.1f}% |")
+        
+        if summary.get('journal', {}).get('total', 0) > 0:
+            journal = summary['journal']
+            success_rate = (journal['successful'] / journal['total']) * 100 if journal['total'] > 0 else 0
+            markdown_content.append(f"| Journal | {journal['total']} | {journal['successful']} | {journal['failed']} | {success_rate:.1f}% |")
+        
+        # Overall statistics
+        total = summary['total']
+        successful = summary['successful']
+        failed = summary['failed']
+        overall_success_rate = (successful / total) * 100 if total > 0 else 0
+        markdown_content.append(f"| **Overall** | **{total}** | **{successful}** | **{failed}** | **{overall_success_rate:.1f}%** |")
+        markdown_content.append("")
+
+        # Get detailed results if available
+        if hasattr(self.rsync_manager, 'results') and self.rsync_manager.results:
+            markdown_content.append("## Job Details")
+            markdown_content.append("")
+            
+            # Group results by host
+            results_by_host = {}
+            for result in self.rsync_manager.results:
+                hostname = result.job.hostname
+                if hostname not in results_by_host:
+                    results_by_host[hostname] = []
+                results_by_host[hostname].append(result)
+            
+            for hostname in sorted(results_by_host.keys()):
+                host_results = results_by_host[hostname]
+                successful_jobs = sum(1 for r in host_results if r.success)
+                total_jobs = len(host_results)
+                
+                markdown_content.append(f"### {hostname}")
+                markdown_content.append(f"- **Jobs:** {successful_jobs}/{total_jobs} successful")
+                
+                # List applications
+                apps = []
+                for result in host_results:
+                    status = "✓" if result.success else "✗"
+                    duration = f"{result.duration:.1f}s" if hasattr(result, 'duration') else "N/A"
+                    apps.append(f"{status} {result.job.app_name} ({duration})")
+                
+                markdown_content.append(f"- **Applications:** {', '.join(apps)}")
+                markdown_content.append("")
+
+        # Write the file
+        with open(summary_file, 'w') as f:
+            f.write('\n'.join(markdown_content))
+
+        print(f"\nSync summary written to: {summary_file.absolute()}")
+
     def print_summary(self) -> None:
         """Print summary of configured hosts and applications"""
         print("\n" + "="*80)

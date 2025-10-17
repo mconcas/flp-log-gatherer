@@ -346,7 +346,7 @@ node_groups:
     - telegraf
   
   qc:
-    - infologger
+    # - infologger
     - consul
     - telegraf
     - ccdb-memory

@@ -96,10 +96,10 @@ async def run_sync(args):
 
         # Compress if not dry-run and compression is enabled
         if not args.dry_run and args.compress:
-            print("Compressing collected logs...")
+            print("Compressing collected logs in parallel...")
             compression_manager = CompressionManager(
                 base_path=collector.config.get_local_storage_path())
-            compression_results = compression_manager.compress_all_hosts()
+            compression_results = await compression_manager.compress_all_hosts_parallel()
 
             print(f"\n{'='*80}")
             print("COMPRESSION SUMMARY")
@@ -251,8 +251,8 @@ def run_list_archives(args):
     return 0
 
 
-def run_compress(args):
-    """Run compression on already-collected logs"""
+async def run_compress(args):
+    """Run compression on already-collected logs in parallel"""
     # Load config to get storage path
     from src.config_manager import ConfigManager
     config = ConfigManager(args.config)
@@ -261,8 +261,12 @@ def run_compress(args):
     compression_manager = CompressionManager(
         base_path=config.get_local_storage_path())
 
-    print("Compressing collected logs...")
-    results = compression_manager.compress_all_hosts(force=args.force)
+    from datetime import datetime
+    start_time = datetime.now()
+    print("Compressing collected logs in parallel...")
+    results = await compression_manager.compress_all_hosts_parallel(force=args.force)
+    end_time = datetime.now()
+    duration = (end_time - start_time).total_seconds()
 
     print(f"\n{'='*80}")
     print("COMPRESSION SUMMARY")
@@ -282,6 +286,7 @@ def run_compress(args):
             print(f"✗ {hostname}: Failed - {result.get('error', 'Unknown error')}")
 
     print(f"\nTotal: {successful}/{total} successful")
+    print(f"Compression completed in {duration:.2f} seconds")
     print(f"{'='*80}\n")
 
     return 0 if successful == total else 1
@@ -380,7 +385,7 @@ Examples:
         elif args.command == 'probe':
             return asyncio.run(run_probe(args))
         elif args.command == 'compress':
-            return run_compress(args)
+            return asyncio.run(run_compress(args))
         elif args.command == 'list-archives':
             return run_list_archives(args)
         else:

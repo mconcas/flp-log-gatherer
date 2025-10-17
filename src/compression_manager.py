@@ -8,6 +8,10 @@ from pathlib import Path
 from datetime import datetime
 from typing import List, Set
 import os
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+import hashlib
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +58,18 @@ class CompressionManager:
             Path to tracking file
         """
         return self.archive_dir / f".{hostname}_tracked.txt"
+    
+    def get_metadata_path(self, hostname: str) -> Path:
+        """
+        Get path to metadata file for tracking directory state
+
+        Args:
+            hostname: Name of the host
+
+        Returns:
+            Path to metadata file
+        """
+        return self.archive_dir / f".{hostname}_metadata.json"
 
     def load_tracked_files(self, hostname: str) -> Set[str]:
         """
@@ -129,9 +145,205 @@ class CompressionManager:
 
         return new_files
 
+    def get_directory_state(self, hostname: str) -> dict:
+        """
+        Get current state of the directory (file paths, sizes, modification times)
+
+        Args:
+            hostname: Name of the host
+
+        Returns:
+            Dictionary with directory state information
+        """
+        node_dir = self.base_path / hostname
+        
+        if not node_dir.exists():
+            return {}
+
+        state = {
+            'files': {},
+            'total_size': 0,
+            'file_count': 0,
+            'latest_mtime': 0
+        }
+
+        for root, dirs, files in os.walk(node_dir):
+            for file in files:
+                file_path = Path(root) / file
+                rel_path = str(file_path.relative_to(self.base_path))
+                
+                try:
+                    stat = file_path.stat()
+                    state['files'][rel_path] = {
+                        'size': stat.st_size,
+                        'mtime': stat.st_mtime
+                    }
+                    state['total_size'] += stat.st_size
+                    state['file_count'] += 1
+                    state['latest_mtime'] = max(state['latest_mtime'], stat.st_mtime)
+                except (OSError, IOError) as e:
+                    logger.warning(f"Could not stat file {file_path}: {e}")
+                    continue
+
+        return state
+
+    def load_last_archive_metadata(self, hostname: str) -> dict:
+        """
+        Load metadata from the last archive creation
+
+        Args:
+            hostname: Name of the host
+
+        Returns:
+            Dictionary with last archive metadata
+        """
+        metadata_path = self.get_metadata_path(hostname)
+        
+        if not metadata_path.exists():
+            return {}
+
+        try:
+            with open(metadata_path, 'r') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError) as e:
+            logger.warning(f"Could not load metadata for {hostname}: {e}")
+            return {}
+
+    def save_archive_metadata(self, hostname: str, state: dict, archive_path: Path) -> None:
+        """
+        Save metadata about the created archive
+
+        Args:
+            hostname: Name of the host
+            state: Directory state that was archived
+            archive_path: Path to the created archive
+        """
+        metadata = {
+            'archive_path': str(archive_path),
+            'creation_time': datetime.now().isoformat(),
+            'directory_state': state
+        }
+        
+        metadata_path = self.get_metadata_path(hostname)
+        
+        try:
+            with open(metadata_path, 'w') as f:
+                json.dump(metadata, f, indent=2)
+        except IOError as e:
+            logger.warning(f"Could not save metadata for {hostname}: {e}")
+
+    def needs_new_archive(self, hostname: str, force: bool = False) -> tuple[bool, str]:
+        """
+        Check if a new archive is needed for the host
+
+        Args:
+            hostname: Name of the host
+            force: If True, always return True
+
+        Returns:
+            Tuple of (needs_archive, reason)
+        """
+        if force:
+            return True, "force flag set"
+
+        # Get current directory state
+        current_state = self.get_directory_state(hostname)
+        
+        if not current_state or current_state['file_count'] == 0:
+            return False, "no files found"
+
+        # Load last archive metadata
+        last_metadata = self.load_last_archive_metadata(hostname)
+        
+        if not last_metadata:
+            return True, "no previous archive metadata found"
+
+        last_state = last_metadata.get('directory_state', {})
+        
+        # Compare file counts
+        if current_state['file_count'] != last_state.get('file_count', 0):
+            return True, f"file count changed: {last_state.get('file_count', 0)} -> {current_state['file_count']}"
+
+        # Compare total size
+        if current_state['total_size'] != last_state.get('total_size', 0):
+            return True, f"total size changed: {last_state.get('total_size', 0)} -> {current_state['total_size']}"
+
+        # Compare latest modification time
+        if current_state['latest_mtime'] > last_state.get('latest_mtime', 0):
+            return True, f"newer files detected (latest mtime: {datetime.fromtimestamp(current_state['latest_mtime'])})"
+
+        # Check if any individual files changed
+        current_files = current_state.get('files', {})
+        last_files = last_state.get('files', {})
+        
+        for file_path, file_info in current_files.items():
+            if file_path not in last_files:
+                return True, f"new file detected: {file_path}"
+            
+            last_file_info = last_files[file_path]
+            if (file_info['size'] != last_file_info.get('size', 0) or 
+                file_info['mtime'] != last_file_info.get('mtime', 0)):
+                return True, f"file changed: {file_path}"
+
+        return False, "no changes detected"
+
+    def get_existing_archive_path(self, hostname: str) -> Path:
+        """
+        Get path to the most recent existing archive for a host
+
+        Args:
+            hostname: Name of the host
+
+        Returns:
+            Path to the existing archive, or None if not found
+        """
+        last_metadata = self.load_last_archive_metadata(hostname)
+        existing_archive = last_metadata.get('archive_path')
+        
+        if existing_archive and Path(existing_archive).exists():
+            return Path(existing_archive)
+        
+        # Fallback: search for the most recent archive file
+        pattern = f"{hostname}_*.tar.gz"
+        archives = list(self.archive_dir.glob(pattern))
+        if archives:
+            # Sort by modification time, newest first
+            archives.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+            return archives[0]
+        
+        return None
+
+    def check_compression_status(self, hostname: str) -> dict:
+        """
+        Check compression status for a host without actually compressing
+
+        Args:
+            hostname: Name of the host
+
+        Returns:
+            Dictionary with status information
+        """
+        needs_archive, reason = self.needs_new_archive(hostname, force=False)
+        current_state = self.get_directory_state(hostname)
+        existing_archive = self.get_existing_archive_path(hostname)
+        
+        status = {
+            'hostname': hostname,
+            'needs_new_archive': needs_archive,
+            'reason': reason,
+            'file_count': current_state.get('file_count', 0),
+            'total_size': current_state.get('total_size', 0),
+            'existing_archive': str(existing_archive) if existing_archive else None
+        }
+        
+        if existing_archive and existing_archive.exists():
+            status['existing_archive_size'] = existing_archive.stat().st_size
+            
+        return status
+
     def create_incremental_archive(self, hostname: str, force: bool = False) -> tuple[Path, int]:
         """
-        Create incremental archive with only new files
+        Create incremental archive with only new files (idempotent)
 
         Args:
             hostname: Name of the host
@@ -140,39 +352,45 @@ class CompressionManager:
         Returns:
             Tuple of (archive_path, number_of_files_added)
         """
-        if force:
-            logger.info(f"Creating full archive for {hostname} (force=True)")
-            node_dir = self.base_path / hostname
+        # Check if new archive is needed
+        needs_archive, reason = self.needs_new_archive(hostname, force)
+        
+        if not needs_archive:
+            logger.info(f"No new archive needed for {hostname}: {reason}")
+            # Return the existing archive path if it exists
+            existing_archive = self.get_existing_archive_path(hostname)
+            return existing_archive, 0
 
-            if not node_dir.exists():
-                logger.warning(f"Node directory does not exist: {node_dir}")
-                return None, 0
-
-            # Get all files
-            all_files = []
-            for root, dirs, files in os.walk(node_dir):
-                for file in files:
-                    file_path = Path(root) / file
-                    all_files.append(file_path)
-
-            files_to_archive = all_files
-        else:
-            # Get only new files
-            files_to_archive = self.get_new_files(hostname)
-
-        if not files_to_archive:
-            logger.info(f"No new files to archive for {hostname}")
+        logger.info(f"Creating new archive for {hostname}: {reason}")
+        
+        # Get current directory state
+        current_state = self.get_directory_state(hostname)
+        
+        if not current_state or current_state['file_count'] == 0:
+            logger.warning(f"No files found for {hostname}")
             return None, 0
 
-        logger.info(
-            f"Creating archive for {hostname} with {len(files_to_archive)} files")
+        node_dir = self.base_path / hostname
+        
+        # Get all files (we always create full archives for idempotency)
+        all_files = []
+        for root, dirs, files in os.walk(node_dir):
+            for file in files:
+                file_path = Path(root) / file
+                all_files.append(file_path)
 
-        # Create archive
+        if not all_files:
+            logger.info(f"No files to archive for {hostname}")
+            return None, 0
+
+        logger.info(f"Creating archive for {hostname} with {len(all_files)} files")
+
+        # Create archive with timestamp
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         archive_path = self.get_archive_path(hostname, timestamp)
 
         with tarfile.open(archive_path, "w:gz") as tar:
-            for file_path in files_to_archive:
+            for file_path in all_files:
                 # Add file with path relative to base directory
                 arcname = file_path.relative_to(self.base_path)
                 try:
@@ -181,9 +399,12 @@ class CompressionManager:
                 except Exception as e:
                     logger.error(f"Failed to add {file_path} to archive: {e}")
 
-        # Update tracked files
-        tracked = self.load_tracked_files(hostname)
-        for file_path in files_to_archive:
+        # Save metadata about this archive
+        self.save_archive_metadata(hostname, current_state, archive_path)
+
+        # Update tracked files (for backward compatibility)
+        tracked = set()
+        for file_path in all_files:
             rel_path = str(file_path.relative_to(self.base_path))
             tracked.add(rel_path)
         self.save_tracked_files(hostname, tracked)
@@ -192,10 +413,9 @@ class CompressionManager:
         archive_size = archive_path.stat().st_size
         size_mb = archive_size / (1024 * 1024)
 
-        logger.info(
-            f"Archive created: {archive_path} ({size_mb:.2f} MB, {len(files_to_archive)} files)")
+        logger.info(f"Archive created: {archive_path} ({size_mb:.2f} MB, {len(all_files)} files)")
 
-        return archive_path, len(files_to_archive)
+        return archive_path, len(all_files)
 
     def compress_all_hosts(self, force: bool = False) -> dict:
         """
@@ -241,6 +461,95 @@ class CompressionManager:
                 }
 
         return results
+
+    async def compress_all_hosts_parallel(self, force: bool = False, max_workers: int = None) -> dict:
+        """
+        Create archives for all hosts in parallel using thread pool
+
+        Args:
+            force: If True, archive all files regardless of tracking
+            max_workers: Maximum number of parallel compression threads (defaults to CPU count)
+
+        Returns:
+            Dictionary with compression results per host
+        """
+        results = {}
+
+        # Find all host directories
+        if not self.base_path.exists():
+            logger.warning(f"Base path does not exist: {self.base_path}")
+            return results
+
+        host_dirs = [d for d in self.base_path.iterdir()
+                     if d.is_dir() and d.name != "archives"]
+
+        if not host_dirs:
+            logger.info("No host directories found for compression")
+            return results
+
+        # Determine optimal number of workers
+        if max_workers is None:
+            max_workers = min(len(host_dirs), os.cpu_count() or 1)
+
+        logger.info(f"Compressing logs for {len(host_dirs)} hosts in parallel (max {max_workers} workers)...")
+        print(f"DEBUG: Using parallel compression with {max_workers} workers for {len(host_dirs)} hosts")
+
+        # Create compression tasks
+        loop = asyncio.get_event_loop()
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all compression tasks
+            tasks = {}
+            for host_dir in host_dirs:
+                hostname = host_dir.name
+                future = loop.run_in_executor(
+                    executor, 
+                    self._compress_host_sync, 
+                    hostname, 
+                    force
+                )
+                tasks[hostname] = future
+
+            # Wait for all tasks to complete
+            for hostname, task in tasks.items():
+                try:
+                    result = await task
+                    results[hostname] = result
+                except Exception as e:
+                    logger.error(f"Failed to compress logs for {hostname}: {e}")
+                    results[hostname] = {
+                        'success': False,
+                        'error': str(e),
+                        'file_count': 0
+                    }
+
+        return results
+
+    def _compress_host_sync(self, hostname: str, force: bool = False) -> dict:
+        """
+        Synchronous compression method for use in thread pool
+        
+        Args:
+            hostname: Name of the host to compress
+            force: If True, archive all files regardless of tracking
+            
+        Returns:
+            Dictionary with compression result for the host
+        """
+        try:
+            archive_path, file_count = self.create_incremental_archive(
+                hostname, force=force)
+
+            return {
+                'success': True,
+                'archive_path': str(archive_path) if archive_path else None,
+                'file_count': file_count
+            }
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e),
+                'file_count': 0
+            }
 
     def list_archives(self, hostname: str = None) -> List[dict]:
         """

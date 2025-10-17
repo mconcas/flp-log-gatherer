@@ -82,24 +82,43 @@ async def run_sync(args):
             collector.print_summary()
             return 0
 
+        # Start timing
+        from datetime import datetime
+        start_time = datetime.now()
+        print(f"\nStarting log collection at {start_time.strftime('%Y-%m-%d %H:%M:%S')} (dry-run: {args.dry_run})...")
+        
         # Collect logs
-        print(f"\nStarting log collection (dry-run: {args.dry_run})...")
         summary = await collector.collect_logs(dry_run=args.dry_run)
-
+        
+        # Calculate duration
+        end_time = datetime.now()
+        duration = end_time - start_time
+        duration_str = str(duration).split('.')[0]  # Remove microseconds
+        
         print(f"\n{'='*80}")
         print("COLLECTION SUMMARY")
         print(f"{'='*80}")
+        print(f"Started: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"Completed: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"Duration: {duration_str}")
         print(f"Total jobs: {summary['total']}")
         print(f"Successful: {summary['successful']}")
         print(f"Failed: {summary['failed']}")
+        if summary['total'] > 0:
+            success_rate = (summary['successful'] / summary['total']) * 100
+            print(f"Success rate: {success_rate:.1f}%")
         print(f"{'='*80}\n")
+
+        # Generate SUMMARY.md file
+        print("Generating SUMMARY.md file...")
+        collector._save_sync_summary_markdown(summary, start_time, end_time)
 
         # Compress if not dry-run and compression is enabled
         if not args.dry_run and args.compress:
-            print("Compressing collected logs...")
+            print("Compressing collected logs in parallel...")
             compression_manager = CompressionManager(
                 base_path=collector.config.get_local_storage_path())
-            compression_results = compression_manager.compress_all_hosts()
+            compression_results = await compression_manager.compress_all_hosts_parallel()
 
             print(f"\n{'='*80}")
             print("COMPRESSION SUMMARY")
@@ -140,12 +159,26 @@ async def run_explore(args):
         # Initialize
         collector.initialize()
 
+        # Start timing
+        from datetime import datetime
+        start_time = datetime.now()
+        print(f"\nStarting exploration at {start_time.strftime('%Y-%m-%d %H:%M:%S')}...")
+
         # Explore remote files
-        print("\nExploring remote files...")
         results = await collector.explore_remote_files()
+        
+        # Calculate duration
+        end_time = datetime.now()
+        duration = end_time - start_time
+        duration_str = str(duration).split('.')[0]  # Remove microseconds
 
         # Print results
         collector.print_exploration_results(results)
+        
+        # Add timing information to the end
+        print(f"\nExploration completed in {duration_str}")
+        print(f"Started: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"Finished: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
 
         # Save SUMMARY.md file
         collector._save_application_summary_markdown(results)
@@ -356,8 +389,9 @@ async def run_raw(args):
         return 1
 
 
-def run_compress(args):
+async def run_compress(args):
     """Run compression on already-collected logs"""
+    print("DEBUG: ENTERING run_compress function - NEW VERSION")
     # Load config to get storage path
     from src.config_manager import ConfigManager
     config = ConfigManager(args.config)
@@ -366,8 +400,27 @@ def run_compress(args):
     compression_manager = CompressionManager(
         base_path=config.get_local_storage_path())
 
-    print("Compressing collected logs...")
-    results = compression_manager.compress_all_hosts(force=args.force)
+    from datetime import datetime
+    start_time = datetime.now()
+    print("Compressing collected logs in parallel...")
+    print("DEBUG: About to call compress_all_hosts_parallel")
+    import sys
+    sys.stdout.flush()
+    try:
+        results = await compression_manager.compress_all_hosts_parallel(force=args.force)
+        print("DEBUG: Parallel compression completed successfully")
+        sys.stdout.flush()
+    except Exception as e:
+        print(f"DEBUG: Parallel compression failed: {e}")
+        sys.stdout.flush()
+        import traceback
+        traceback.print_exc()
+        # Fallback to sequential compression
+        print("DEBUG: Falling back to sequential compression")
+        sys.stdout.flush()
+        results = compression_manager.compress_all_hosts(force=args.force)
+    end_time = datetime.now()
+    duration = (end_time - start_time).total_seconds()
 
     print(f"\n{'='*80}")
     print("COMPRESSION SUMMARY")
@@ -387,7 +440,8 @@ def run_compress(args):
             print(f"✗ {hostname}: Failed - {result.get('error', 'Unknown error')}")
 
     print(f"\nTotal: {successful}/{total} successful")
-    print(f"{'='*80}\n")
+    print(f"Compression completed in {duration:.2f} seconds")
+    print(f"{'='*80}")
 
     return 0 if successful == total else 1
 
@@ -491,7 +545,7 @@ Examples:
         elif args.command == 'raw':
             return asyncio.run(run_raw(args))
         elif args.command == 'compress':
-            return run_compress(args)
+            return asyncio.run(run_compress(args))
         elif args.command == 'list-archives':
             return run_list_archives(args)
         else:

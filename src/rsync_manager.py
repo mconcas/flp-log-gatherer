@@ -162,6 +162,54 @@ class RsyncManager:
         self.timeout = timeout
         self.results: List[JobResult] = []
 
+    def _is_file_not_found_error(self, stderr_str: str, return_code: int) -> bool:
+        """
+        Check if the rsync error indicates files not found (non-retryable)
+        
+        Args:
+            stderr_str: Standard error output from rsync
+            return_code: Process return code
+            
+        Returns:
+            True if this is a file-not-found error that should not be retried
+        """
+        # Common rsync file-not-found indicators
+        file_not_found_patterns = [
+            "No such file or directory",
+            "file has vanished",
+            "source files disappearing",
+            "no files to consider",
+            "cannot stat"
+        ]
+        
+        # Return codes that indicate file issues (not connection issues)
+        file_error_codes = {3, 23}  # 3: input/output file errors, 23: partial transfer
+        
+        # Check for file-not-found patterns in error message
+        for pattern in file_not_found_patterns:
+            if pattern in stderr_str:
+                return True
+                
+        # Check for specific return codes that indicate file issues
+        if return_code in file_error_codes:
+            # Additional check: make sure it's not a connection issue disguised as file error
+            connection_indicators = [
+                "Connection refused",
+                "Connection timed out", 
+                "Host key verification failed",
+                "Permission denied (publickey",
+                "ssh: connect to host",
+                "Network is unreachable"
+            ]
+            
+            for conn_pattern in connection_indicators:
+                if conn_pattern in stderr_str:
+                    return False  # This is actually a connection issue, should retry
+                    
+            return True  # File error, don't retry
+            
+        return False  # Other errors may be transient, allow retry
+
     def build_rsync_command(self, job: RsyncJob, dry_run: bool = False) -> List[str]:
         """
         Build rsync command for a job
@@ -234,8 +282,9 @@ class RsyncManager:
 
             try:
                 cmd = self.build_rsync_command(job, dry_run)
-                logger.debug(
-                    f"[{job.hostname}/{job.app_name}] Executing (attempt {attempts}/{self.retry_count}): {' '.join(cmd)}")
+                logger.info(
+                    f"[{job.hostname}/{job.app_name}] Starting rsync (attempt {attempts}/{self.retry_count})")
+                logger.debug(f"[{job.hostname}/{job.app_name}] Command: {' '.join(cmd)}")
 
                 # Execute rsync command
                 process = await asyncio.create_subprocess_exec(
@@ -277,8 +326,8 @@ class RsyncManager:
                 duration = (datetime.now() - start_time).total_seconds()
 
                 if process.returncode == 0:
-                    logger.debug(
-                        f"[{job.hostname}/{job.app_name}] Success in {duration:.2f}s")
+                    logger.info(
+                        f"[{job.hostname}/{job.app_name}] ✓ Success ({duration:.1f}s)")
                     return JobResult(
                         job=job,
                         success=True,
@@ -289,14 +338,30 @@ class RsyncManager:
                         attempts=attempts
                     )
                 else:
-                    logger.debug(
-                        f"[{job.hostname}/{job.app_name}] Failed with return code {process.returncode}")
-                    if attempts < self.retry_count:
-                        logger.debug(
-                            f"[{job.hostname}/{job.app_name}] Retrying in {self.retry_delay}s...")
+                    # Check if this is a file-not-found error (don't retry)
+                    if self._is_file_not_found_error(stderr_str, process.returncode):
+                        logger.info(
+                            f"[{job.hostname}/{job.app_name}] ✗ Files not found, skipping retries ({duration:.1f}s)")
+                        logger.debug(f"[{job.hostname}/{job.app_name}] Error: {stderr_str.strip()}")
+                        return JobResult(
+                            job=job,
+                            success=False,
+                            stdout=stdout_str,
+                            stderr=stderr_str,
+                            return_code=process.returncode,
+                            duration=duration,
+                            attempts=attempts
+                        )
+                    elif attempts < self.retry_count:
+                        logger.warning(
+                            f"[{job.hostname}/{job.app_name}] ⚠ Failed with return code {process.returncode}, retrying... ({duration:.1f}s)")
+                        logger.debug(f"[{job.hostname}/{job.app_name}] Error: {stderr_str.strip()}")
                         await asyncio.sleep(self.retry_delay)
                         continue
                     else:
+                        logger.error(
+                            f"[{job.hostname}/{job.app_name}] ✗ Failed after {attempts} attempts ({duration:.1f}s)")
+                        logger.debug(f"[{job.hostname}/{job.app_name}] Final error: {stderr_str.strip()}")
                         return JobResult(
                             job=job,
                             success=False,
@@ -308,14 +373,15 @@ class RsyncManager:
                         )
 
             except Exception as e:
-                logger.error(f"[{job.hostname}/{job.app_name}] Exception: {e}")
+                duration = (datetime.now() - start_time).total_seconds()
                 if attempts < self.retry_count:
-                    logger.info(
-                        f"[{job.hostname}/{job.app_name}] Retrying in {self.retry_delay}s...")
+                    logger.warning(
+                        f"[{job.hostname}/{job.app_name}] ⚠ Exception: {e}, retrying... ({duration:.1f}s)")
                     await asyncio.sleep(self.retry_delay)
                     continue
                 else:
-                    duration = (datetime.now() - start_time).total_seconds()
+                    logger.error(
+                        f"[{job.hostname}/{job.app_name}] ✗ Exception after {attempts} attempts ({duration:.1f}s): {e}")
                     return JobResult(
                         job=job,
                         success=False,
@@ -848,8 +914,24 @@ class RsyncManager:
         Returns:
             List of JobResults
         """
-        logger.info(
-            f"Executing {len(jobs)} jobs with max {self.max_parallel_jobs} parallel")
+        logger.info(f"Executing {len(jobs)} rsync jobs with max {self.max_parallel_jobs} parallel")
+        
+        # Log host summary like in explore mode
+        host_summary = {}
+        for job in jobs:
+            if job.hostname not in host_summary:
+                host_summary[job.hostname] = {'apps': set(), 'job_count': 0}
+            host_summary[job.hostname]['apps'].add(job.app_name)
+            host_summary[job.hostname]['job_count'] += 1
+        
+        logger.info(f"Syncing from {len(host_summary)} hosts:")
+        for hostname, info in sorted(host_summary.items()):
+            apps_str = ', '.join(sorted(info['apps']))
+            logger.debug(f"Host {hostname}: {info['job_count']} jobs ({apps_str})")
+        
+        # Note: Unlike explore mode, sync mode cannot easily batch connections
+        # because each rsync job transfers different files and needs its own connection
+        logger.debug("Note: Each rsync job requires its own SSH connection")
 
         semaphore = asyncio.Semaphore(self.max_parallel_jobs)
 
@@ -860,6 +942,22 @@ class RsyncManager:
         # Execute all jobs with bounded parallelism
         tasks = [bounded_execute(job) for job in jobs]
         results = await asyncio.gather(*tasks)
+
+        # Log connection summary
+        successful_jobs = sum(1 for r in results if r.success)
+        failed_jobs = len(results) - successful_jobs
+        
+        if failed_jobs > 0:
+            logger.warning(f"Sync completed: {successful_jobs}/{len(results)} jobs successful")
+            # Log failed hosts
+            failed_hosts = set()
+            for result in results:
+                if not result.success:
+                    failed_hosts.add(result.job.hostname)
+            if failed_hosts:
+                logger.warning(f"Failed hosts: {', '.join(sorted(failed_hosts))}")
+        else:
+            logger.info(f"All {len(results)} sync jobs completed successfully")
 
         self.results.extend(results)
         return results
