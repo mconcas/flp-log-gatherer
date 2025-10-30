@@ -401,7 +401,7 @@ rsync_options:
   # Local directory where logs will be stored
   # Can be absolute path (e.g., /var/logs/collected) or relative to this directory
   # Directory will be created automatically if it doesn't exist
-  local_storage: /data/logs/p2-prod
+  local_storage: /eos/project/a/alice-o2-flp/run3-metadata/system-logs
 
   # SSH user for remote connections
   ssh_user: root

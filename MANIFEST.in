@@ -1,1 +1,9 @@
-flp-log-gatherer
+include README.md
+include LICENSE
+include requirements.txt
+include config/*.yaml
+include config/hosts
+recursive-include config *
+recursive-include src *.py
+global-exclude *.pyc
+global-exclude __pycache__/*

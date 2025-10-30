@@ -8,10 +8,18 @@ import logging
 import sys
 from pathlib import Path
 
-from src.log_collector import LogCollector
-from src.compression_manager import CompressionManager
-from src.probe_manager import ProbeManager
-from src.inventory_parser import InventoryParser
+try:
+    # When installed as package
+    from .log_collector import LogCollector
+    from .compression_manager import CompressionManager
+    from .probe_manager import ProbeManager
+    from .inventory_parser import InventoryParser
+except ImportError:
+    # When running from source
+    from src.log_collector import LogCollector
+    from src.compression_manager import CompressionManager
+    from src.probe_manager import ProbeManager
+    from src.inventory_parser import InventoryParser
 
 
 class ColoredFormatter(logging.Formatter):
@@ -206,7 +214,10 @@ async def run_probe(args):
             return 1
 
         # Load config to get SSH settings
-        from src.config_manager import ConfigManager
+        try:
+            from .config_manager import ConfigManager
+        except ImportError:
+            from src.config_manager import ConfigManager
         config = ConfigManager(args.config)
         config.load()
 
@@ -255,7 +266,10 @@ async def run_probe(args):
 def run_list_archives(args):
     """List available archives"""
     # Load config to get storage path
-    from src.config_manager import ConfigManager
+    try:
+        from .config_manager import ConfigManager
+    except ImportError:
+        from src.config_manager import ConfigManager
     config = ConfigManager(args.config)
     config.load()
 
@@ -286,9 +300,14 @@ def run_list_archives(args):
 
 async def run_raw(args):
     """Run raw mode log directory size estimation"""
-    from src.raw_mode_manager import RawModeManager
-    from src.inventory_parser import InventoryParser
-    from src.config_manager import ConfigManager
+    try:
+        from .raw_mode_manager import RawModeManager
+        from .inventory_parser import InventoryParser
+        from .config_manager import ConfigManager
+    except ImportError:
+        from src.raw_mode_manager import RawModeManager
+        from src.inventory_parser import InventoryParser
+        from src.config_manager import ConfigManager
 
     try:
         # Load configuration
