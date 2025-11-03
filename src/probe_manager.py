@@ -12,9 +12,22 @@ import asyncio
 import logging
 import subprocess
 import time
+import socket
+import functools
 from typing import Dict, List, Tuple
 
 logger = logging.getLogger(__name__)
+
+
+# DNS Cache to reduce redundant lookups
+@functools.lru_cache(maxsize=1000)
+def resolve_hostname(hostname: str) -> str:
+    """Cache DNS resolution to reduce redundant lookups"""
+    try:
+        return socket.gethostbyname(hostname)
+    except socket.gaierror:
+        logger.warning(f"DNS resolution failed for {hostname}, using hostname as-is")
+        return hostname
 
 
 class ProbeManager:
@@ -62,6 +75,10 @@ class ProbeManager:
         """
         logger.debug(f"Probing host: {hostname}")
 
+        # Pre-resolve hostname to reduce DNS requests
+        resolved_hostname = resolve_hostname(hostname)
+        logger.debug(f"Resolved {hostname} to {resolved_hostname}")
+
         # Test ping
         ping_success, ping_time = await self._test_ping(hostname)
 
@@ -88,6 +105,11 @@ class ProbeManager:
             List of probe result dictionaries
         """
         logger.info(f"Probing {len(hostnames)} hosts...")
+
+        # Pre-resolve all hostnames to reduce DNS requests
+        logger.debug("Pre-resolving hostnames to reduce DNS lookups...")
+        for hostname in hostnames:
+            resolve_hostname(hostname)
 
         # If gateway is configured, use batched approach to minimize gateway connections
         if self.gateway_host and len(hostnames) > 1:
@@ -184,11 +206,14 @@ class ProbeManager:
                 if self.gateway_user:
                     cmd.extend(['-l', self.gateway_user])
 
-                # Add SSH options
+                # Add SSH options (including connection multiplexing for efficiency)
                 cmd.extend([
                     '-o', 'ConnectTimeout=10',
                     '-o', 'BatchMode=yes',
-                    '-o', 'LogLevel=ERROR'
+                    '-o', 'LogLevel=ERROR',
+                    '-o', 'ControlMaster=auto',
+                    '-o', 'ControlPath=/tmp/ssh-%r@%h:%p',
+                    '-o', 'ControlPersist=300'
                 ])
 
                 if not self.strict_host_key_checking:
@@ -218,7 +243,10 @@ class ProbeManager:
                     target_cmd.extend([
                         '-o', 'ConnectTimeout=10',
                         '-o', 'BatchMode=yes',
-                        '-o', 'LogLevel=ERROR'
+                        '-o', 'LogLevel=ERROR',
+                        '-o', 'ControlMaster=auto',
+                        '-o', 'ControlPath=/tmp/ssh-%r@%h:%p',
+                        '-o', 'ControlPersist=300'
                     ])
                     
                     if not self.strict_host_key_checking:
@@ -439,11 +467,14 @@ class ProbeManager:
             # Build SSH command to execute ping on gateway
             ssh_cmd = ['ssh']
 
-            # Add SSH options
+            # Add SSH options (including connection multiplexing for efficiency)
             ssh_cmd.extend([
                 '-o', 'ConnectTimeout=10',
                 '-o', 'BatchMode=yes',
-                '-o', 'LogLevel=ERROR'
+                '-o', 'LogLevel=ERROR',
+                '-o', 'ControlMaster=auto',
+                '-o', 'ControlPath=/tmp/ssh-%r@%h:%p',
+                '-o', 'ControlPersist=300'
             ])
 
             if not self.strict_host_key_checking:
@@ -530,11 +561,14 @@ class ProbeManager:
                 if self.ssh_user:
                     cmd.extend(['-l', self.ssh_user])
 
-                # Add SSH options
+                # Add SSH options (including connection multiplexing for efficiency)
                 cmd.extend([
                     '-o', 'ConnectTimeout=10',
                     '-o', 'BatchMode=yes',
-                    '-o', 'LogLevel=ERROR'
+                    '-o', 'LogLevel=ERROR',
+                    '-o', 'ControlMaster=auto',
+                    '-o', 'ControlPath=/tmp/ssh-%r@%h:%p',
+                    '-o', 'ControlPersist=300'
                 ])
 
                 if not self.strict_host_key_checking:

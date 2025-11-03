@@ -61,7 +61,7 @@ applications:
   # COG
   cog:
     log_paths:
-      - var/log/o2-cog*
+      - /var/log/o2-cog*
     journal: false # Use file-based logs only
     journal_mode: binary # Optional: not used when journal: false
 
@@ -115,10 +115,15 @@ applications:
     journal_mode: binary # Optional: not used when journal: false
   
   # Kafka
+  kafka-ui:
+    log_paths:
+      - /var/log/kafka-ui*
+    journal: false # Use file-based logs only
+    journal_mode: binary # Optional: not used when journal: false
+  
   kafka:
     log_paths:
       - /var/log/kafka
-      - /var/log/kafka-ui*
       - /var/log/confluent
     journal: false # Use file-based logs only
     journal_mode: binary # Optional: not used when journal: false
@@ -259,7 +264,6 @@ node_groups:
     - consul
 
   bookkeepingdb:
-    - bookkeeping
     - telegraf
     - consul
 
@@ -284,7 +288,6 @@ node_groups:
   head:
     - apricot
     - consul
-    - infologger
     - nomad
     - o2-flp-setup
     - telegraf
@@ -325,8 +328,8 @@ node_groups:
     - telegraf
     - consul
 
-  vault:
-    - vault
+  # vault:
+  #   - vault
 
   gateways:
     - telegraf
@@ -346,6 +349,9 @@ node_groups:
     - telegraf
     - consul
     - nomad
+
+  kafka-ui:
+    - kafka-ui
 
   calib-dcs:
     - infologger-daemon

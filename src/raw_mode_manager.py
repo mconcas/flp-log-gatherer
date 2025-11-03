@@ -9,10 +9,23 @@ import asyncio
 import logging
 import subprocess
 import re
+import socket
+import functools
 from typing import Dict, List, Tuple, Optional
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+
+# DNS Cache to reduce redundant lookups
+@functools.lru_cache(maxsize=1000)
+def resolve_hostname(hostname: str) -> str:
+    """Cache DNS resolution to reduce redundant lookups"""
+    try:
+        return socket.gethostbyname(hostname)
+    except socket.gaierror:
+        logger.warning(f"DNS resolution failed for {hostname}, using hostname as-is")
+        return hostname
 
 
 class RawModeManager:
@@ -103,6 +116,11 @@ class RawModeManager:
 
         logger.info(f"Checking raw directory sizes on {len(hostnames)} hosts for {len(directories)} directories")
         
+        # Pre-resolve all hostnames to reduce DNS requests
+        logger.debug("Pre-resolving hostnames to reduce DNS lookups...")
+        for hostname in hostnames:
+            resolve_hostname(hostname)
+        
         # Use batched approach if we have a gateway or many hosts
         if self.gateway_host or len(hostnames) > 1:
             return await self._check_hosts_batched(hostnames, directories)
@@ -174,7 +192,10 @@ class RawModeManager:
         cmd.extend([
             '-o', 'ConnectTimeout=10',
             '-o', 'BatchMode=yes',
-            '-o', 'LogLevel=ERROR'
+            '-o', 'LogLevel=ERROR',
+            '-o', 'ControlMaster=auto',
+            '-o', 'ControlPath=/tmp/ssh-%r@%h:%p',
+            '-o', 'ControlPersist=300'
         ])
 
         if self.ssh_ignore_host_key:
@@ -202,7 +223,10 @@ class RawModeManager:
             target_cmd.extend([
                 '-o', 'ConnectTimeout=10',
                 '-o', 'BatchMode=yes',
-                '-o', 'LogLevel=ERROR'
+                '-o', 'LogLevel=ERROR',
+                '-o', 'ControlMaster=auto',
+                '-o', 'ControlPath=/tmp/ssh-%r@%h:%p',
+                '-o', 'ControlPersist=300'
             ])
 
             if self.ssh_ignore_host_key:
@@ -302,7 +326,10 @@ class RawModeManager:
         cmd.extend([
             '-o', 'ConnectTimeout=10',
             '-o', 'BatchMode=yes',
-            '-o', 'LogLevel=ERROR'
+            '-o', 'LogLevel=ERROR',
+            '-o', 'ControlMaster=auto',
+            '-o', 'ControlPath=/tmp/ssh-%r@%h:%p',
+            '-o', 'ControlPersist=300'
         ])
 
         if self.ssh_ignore_host_key:

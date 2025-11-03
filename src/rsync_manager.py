@@ -5,10 +5,23 @@ import subprocess
 import asyncio
 import logging
 import re
+import socket
+import functools
 from typing import List, Dict, Optional, Tuple
 from pathlib import Path
 from datetime import datetime
 from dataclasses import dataclass
+
+
+# DNS Cache to reduce redundant lookups
+@functools.lru_cache(maxsize=1000)
+def resolve_hostname(hostname: str) -> str:
+    """Cache DNS resolution to reduce redundant lookups"""
+    try:
+        return socket.gethostbyname(hostname)
+    except socket.gaierror:
+        logger.warning(f"DNS resolution failed for {hostname}, using hostname as-is")
+        return hostname
 
 
 # Set up logging
@@ -245,6 +258,9 @@ class RsyncManager:
         ssh_opts = f"ssh -p {job.ssh_port}"
         if job.ssh_ignore_host_key:
             ssh_opts += " -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+        
+        # Add SSH connection multiplexing to reduce DNS lookups and connection overhead
+        ssh_opts += " -o ControlMaster=auto -o ControlPath=/tmp/ssh-%r@%h:%p -o ControlPersist=300"
 
         # Add gateway/proxy jump host configuration if specified
         if job.gateway_host:
@@ -274,6 +290,13 @@ class RsyncManager:
         Returns:
             JobResult with execution details
         """
+        # Pre-resolve hostname to reduce DNS lookups during retries
+        try:
+            resolved_ip = resolve_hostname(job.hostname)
+            logger.debug(f"[{job.hostname}] Resolved to {resolved_ip}")
+        except Exception as e:
+            logger.warning(f"[{job.hostname}] DNS pre-resolution failed: {e}")
+
         start_time = datetime.now()
         attempts = 0
 
