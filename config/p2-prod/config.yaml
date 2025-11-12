@@ -181,9 +181,9 @@ applications:
   # LHC bookkeeping
   bookkeeping-lhc:
     log_paths:
-      - /opt/o2-bkp-lhc-client/HistFiles/
-      - /opt/o2-bkp-lhc-client/FillsHistory/
-      - /opt/o2-bkp-lhc-client/RunsHistory/
+      - /opt/o2-bkp-lhc-client/HistFiles
+      - /opt/o2-bkp-lhc-client/FillsHistory
+      - /opt/o2-bkp-lhc-client/RunsHistory
     journal: false # Use file-based logs only
     journal_mode: binary # Optional: not used when journal: false
 
@@ -458,7 +458,7 @@ rsync_options:
   retry_delay: 5
 
   # Timeout in seconds for each rsync operation
-  timeout: 300
+  timeout: 600
 
   # Date filter: only sync files modified within last N days
   # Set to null or omit to sync all files

@@ -75,6 +75,36 @@ class LogCollector:
 
         logger.info("Initialization complete")
 
+    def filter_hosts(self, host_list: List[str]) -> List[str]:
+        """
+        Filter inventory to only include specified hosts
+        
+        Args:
+            host_list: List of hostnames to filter
+            
+        Returns:
+            List of valid hostnames that exist in inventory
+        """
+        all_hosts_set = set(self.inventory.get_all_hosts())
+        filtered_hosts = [h for h in host_list if h in all_hosts_set]
+        
+        # Report any hosts not found
+        not_found = [h for h in host_list if h not in all_hosts_set]
+        if not_found:
+            logger.warning(f"Hosts not found in inventory: {', '.join(not_found)}")
+        
+        # Update the inventory node_to_groups to only include filtered hosts
+        if filtered_hosts:
+            # Keep only the filtered hosts in node_to_groups
+            self.inventory.node_to_groups = {
+                h: self.inventory.node_to_groups[h] 
+                for h in filtered_hosts 
+                if h in self.inventory.node_to_groups
+            }
+            logger.info(f"Inventory filtered to {len(filtered_hosts)} hosts")
+        
+        return filtered_hosts
+
     def build_jobs(self) -> List[RsyncJob]:
         """
         Build rsync jobs and journal collection tasks based on inventory and configuration

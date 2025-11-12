@@ -79,6 +79,15 @@ async def run_sync(args):
     try:
         # Initialize
         collector.initialize()
+        
+        # Apply host filter if specified
+        if args.hosts:
+            host_list = [h.strip() for h in args.hosts.split(',')]
+            filtered_hosts = collector.filter_hosts(host_list)
+            if not filtered_hosts:
+                logging.error(f"None of the specified hosts were found in inventory: {args.hosts}")
+                return 1
+            logging.info(f"Filtering to {len(filtered_hosts)} specified hosts: {', '.join(filtered_hosts)}")
 
         # Ensure local storage directory exists
         storage_path = collector.config.get_local_storage_path()
@@ -166,6 +175,15 @@ async def run_explore(args):
     try:
         # Initialize
         collector.initialize()
+        
+        # Apply host filter if specified
+        if args.hosts:
+            host_list = [h.strip() for h in args.hosts.split(',')]
+            filtered_hosts = collector.filter_hosts(host_list)
+            if not filtered_hosts:
+                logging.error(f"None of the specified hosts were found in inventory: {args.hosts}")
+                return 1
+            logging.info(f"Filtering to {len(filtered_hosts)} specified hosts: {', '.join(filtered_hosts)}")
 
         # Start timing
         from datetime import datetime
@@ -212,6 +230,24 @@ async def run_probe(args):
         if not hosts:
             logging.error("No hosts found in inventory")
             return 1
+        
+        # Apply host filter if specified
+        if args.hosts:
+            host_list = [h.strip() for h in args.hosts.split(',')]
+            all_hosts_set = set(hosts)
+            filtered_hosts = [h for h in host_list if h in all_hosts_set]
+            
+            if not filtered_hosts:
+                logging.error(f"None of the specified hosts were found in inventory: {args.hosts}")
+                return 1
+            
+            # Report any hosts not found
+            not_found = [h for h in host_list if h not in all_hosts_set]
+            if not_found:
+                logging.warning(f"Hosts not found in inventory: {', '.join(not_found)}")
+            
+            hosts = filtered_hosts
+            logging.info(f"Filtering to {len(hosts)} specified hosts: {', '.join(hosts)}")
 
         # Load config to get SSH settings
         try:
@@ -322,6 +358,24 @@ async def run_raw(args):
         if not hosts:
             logging.error("No hosts found in inventory")
             return 1
+        
+        # Apply host filter if specified
+        if args.hosts:
+            host_list = [h.strip() for h in args.hosts.split(',')]
+            all_hosts_set = set(hosts)
+            filtered_hosts = [h for h in host_list if h in all_hosts_set]
+            
+            if not filtered_hosts:
+                logging.error(f"None of the specified hosts were found in inventory: {args.hosts}")
+                return 1
+            
+            # Report any hosts not found
+            not_found = [h for h in host_list if h not in all_hosts_set]
+            if not_found:
+                logging.warning(f"Hosts not found in inventory: {', '.join(not_found)}")
+            
+            hosts = filtered_hosts
+            logging.info(f"Filtering to {len(hosts)} specified hosts: {', '.join(hosts)}")
 
         logging.info(f"Found {len(hosts)} hosts in inventory for raw mode analysis")
 
@@ -478,14 +532,23 @@ Examples:
   # Sync with automatic compression
   %(prog)s sync --compress
   
+  # Sync specific hosts only
+  %(prog)s sync --hosts host1,host2,host3
+  
   # Dry-run to see what would be synced
   %(prog)s sync --dry-run
   
   # Explore remote files without syncing
   %(prog)s explore
   
+  # Explore specific hosts only
+  %(prog)s explore --hosts host1,host2
+  
   # Test connectivity and SSH access
   %(prog)s probe
+  
+  # Probe specific hosts
+  %(prog)s probe --hosts host1,host2
   
   # Show configuration summary
   %(prog)s sync --show-summary
@@ -517,18 +580,26 @@ Examples:
                              help='Compress collected logs after syncing (creates tar.gz archives)')
     sync_parser.add_argument('--show-summary', action='store_true',
                              help='Show configuration summary and exit')
+    sync_parser.add_argument('--hosts', type=str, default=None,
+                             help='Comma-separated list of specific hosts to sync (must be in inventory)')
 
     # Explore command
     explore_parser = subparsers.add_parser('explore',
                                            help='Explore remote files without syncing')
+    explore_parser.add_argument('--hosts', type=str, default=None,
+                                help='Comma-separated list of specific hosts to explore (must be in inventory)')
 
     # Probe command
     probe_parser = subparsers.add_parser('probe',
                                          help='Test connectivity and SSH access to all hosts')
+    probe_parser.add_argument('--hosts', type=str, default=None,
+                              help='Comma-separated list of specific hosts to probe (must be in inventory)')
 
     # Raw command
     raw_parser = subparsers.add_parser('raw',
                                        help='Quick estimation of total log directory sizes')
+    raw_parser.add_argument('--hosts', type=str, default=None,
+                            help='Comma-separated list of specific hosts to check (must be in inventory)')
 
     # Compress command
     compress_parser = subparsers.add_parser('compress',
@@ -552,6 +623,7 @@ Examples:
         args.dry_run = False
         args.compress = False
         args.show_summary = False
+        args.hosts = None  # No host filtering by default
 
     # Execute command
     try:
