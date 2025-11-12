@@ -178,6 +178,15 @@ applications:
     journal: false # Use file-based logs only
     journal_mode: binary # Optional: not used when journal: false
 
+  # LHC bookkeeping
+  bookkeeping-lhc:
+    log_paths:
+      - /opt/o2-bkp-lhc-client/HistFiles/
+      - /opt/o2-bkp-lhc-client/FillsHistory/
+      - /opt/o2-bkp-lhc-client/RunsHistory/
+    journal: false # Use file-based logs only
+    journal_mode: binary # Optional: not used when journal: false
+
   # OpenSearch
   opensearch:
 
@@ -268,6 +277,7 @@ node_groups:
     - consul
 
   bookkeeping-lhc:
+    - bookkeeping-lhc
     - bookkeeping
     - telegraf
     - consul
